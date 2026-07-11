@@ -1,0 +1,203 @@
+name: rag-study-helper-enterprise
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag_study_helper}
+      POSTGRES_USER: ${POSTGRES_USER:-rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_change_me}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "psql -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-rag_study_helper} -tAc 'SELECT 1' >/dev/null"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: ${REDIS_IMAGE}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+      - --requirepass
+      - ${REDIS_PASSWORD:-redis_change_me}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_change_me}
+    ports:
+      - "127.0.0.1:16379:6379"
+    volumes:
+      - ./volumes/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_change_me}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  etcd:
+    image: ${ETCD_IMAGE}
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >-
+      etcd --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    volumes:
+      - ./volumes/etcd:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  minio:
+    image: ${MINIO_IMAGE}
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+    command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - ./volumes/minio:/minio_data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+
+  milvus:
+    image: ${MILVUS_IMAGE}
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+      MQ_TYPE: woodpecker
+    ports:
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
+    volumes:
+      - ./volumes/milvus:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 5
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ..
+    command: ["alembic", "upgrade", "head"]
+    environment: &app-env
+      APP_ENV: docker
+      APP_POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag_change_me}@postgres:5432/${POSTGRES_DB:-rag_study_helper}
+      APP_POSTGRES_SYNC_DSN: postgresql+psycopg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag_change_me}@postgres:5432/${POSTGRES_DB:-rag_study_helper}
+      APP_REDIS_URL: redis://:${REDIS_PASSWORD:-redis_change_me}@redis:6379/0
+      APP_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redis_change_me}@redis:6379/1
+      APP_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redis_change_me}@redis:6379/2
+      APP_MILVUS_URI: http://milvus:19530
+      APP_MILVUS_COLLECTION: rag_chunks_v2
+      APP_MILVUS_COLLECTION_ALIAS: rag_chunks_current
+      APP_CHAT_API_KEY: ${APP_CHAT_API_KEY:-}
+      APP_CHAT_BASE_URL: ${APP_CHAT_BASE_URL:-https://api.deepseek.com/v1}
+      APP_CHAT_MODEL: ${APP_CHAT_MODEL:-deepseek-chat}
+      APP_EMBEDDING_API_KEY: ${APP_EMBEDDING_API_KEY:-}
+      APP_EMBEDDING_BASE_URL: ${APP_EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
+      APP_EMBEDDING_MODEL: ${APP_EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
+      APP_RERANK_API_KEY: ${APP_RERANK_API_KEY:-}
+      APP_RERANK_BASE_URL: ${APP_RERANK_BASE_URL:-https://api.siliconflow.cn/v1}
+      APP_RERANK_MODEL: ${APP_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      APP_IDENTITY_HEADER_SECRET: ${APP_IDENTITY_HEADER_SECRET:-}
+      APP_ADMIN_USER_IDS: ${APP_ADMIN_USER_IDS:-["admin"]}
+      APP_SCAN_ROOTS: '{"default":"data/import"}'
+      APP_FEISHU_ENABLED: ${APP_FEISHU_ENABLED:-false}
+      APP_FEISHU_APP_ID: ${APP_FEISHU_APP_ID:-}
+      APP_FEISHU_APP_SECRET: ${APP_FEISHU_APP_SECRET:-}
+      APP_FEISHU_SPACE_ID: ${APP_FEISHU_SPACE_ID:-}
+      APP_FEISHU_TENANT_ID: ${APP_FEISHU_TENANT_ID:-default}
+      APP_FEISHU_RUN_AS_USER: ${APP_FEISHU_RUN_AS_USER:-feishu-sync}
+      APP_FEISHU_KNOWLEDGE_BASE_ID: ${APP_FEISHU_KNOWLEDGE_BASE_ID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+    environment: *app-env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=5)"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment: *app-env
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ..
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO"]
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
