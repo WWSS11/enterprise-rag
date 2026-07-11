@@ -1,0 +1,207 @@
+{
+  "name": "项目架构质量基线 v1",
+  "description": "基于当前企业版、旧版项目说明、架构决策、Maven 配置和旧版前端整理的首批真实评测集。",
+  "knowledge_base_slug": "project-baseline",
+  "cases": [
+    {
+      "question": "当前企业版 LangGraph 的 RAG 工作流节点顺序是什么？",
+      "reference_answer": "工作流依次为 rewrite_query、retrieve、rerank、generate。",
+      "expected_document_names": ["enterprise-overview.md"],
+      "required_key_points": ["rewrite_query", "retrieve", "rerank", "generate"],
+      "should_refuse": false,
+      "tags": ["enterprise", "langgraph"]
+    },
+    {
+      "question": "企业版蓝绿向量索引重建如何避免影响线上检索？",
+      "reference_answer": "先构建并写完新的 Milvus 物理集合，再通过 alter_alias 原子切换 alias；失败时删除新集合，保留旧集合继续服务。",
+      "expected_document_names": ["enterprise-architecture.md", "enterprise-overview.md"],
+      "required_key_points": ["物理集合", "alter_alias", "原子切换", "旧集合"],
+      "should_refuse": false,
+      "tags": ["enterprise", "milvus"]
+    },
+    {
+      "question": "PostgreSQL、Milvus 和 Redis 在企业版中分别承担什么角色？",
+      "reference_answer": "PostgreSQL 是业务事实源，Milvus 是可重建的检索投影，Redis 用于短期状态与协调。",
+      "expected_document_names": ["enterprise-architecture.md"],
+      "required_key_points": ["业务事实源", "检索投影", "短期状态", "协调"],
+      "should_refuse": false,
+      "tags": ["enterprise", "storage"]
+    },
+    {
+      "question": "文档入库过程中 PostgreSQL 提交前失败时如何补偿？",
+      "reference_answer": "系统删除新写入的向量，并让已有可用版本的文档恢复为 ready，避免破坏旧索引。",
+      "expected_document_names": ["enterprise-architecture.md"],
+      "required_key_points": ["删除新向量", "恢复为", "ready", "旧索引"],
+      "should_refuse": false,
+      "tags": ["enterprise", "ingestion"]
+    },
+    {
+      "question": "企业版知识库有哪些访问模式和成员权限等级？",
+      "reference_answer": "访问模式包括 tenant 和 restricted；成员权限包括 reader、editor、owner。",
+      "expected_document_names": ["enterprise-architecture.md"],
+      "required_key_points": ["tenant", "restricted", "reader", "editor", "owner"],
+      "should_refuse": false,
+      "tags": ["enterprise", "authorization"]
+    },
+    {
+      "question": "为什么 Celery Worker 子进程要复用持久异步事件循环？",
+      "reference_answer": "为了避免 SQLAlchemy AsyncEngine、redis-py 和异步 HTTP 客户端跨事件循环复用 Future。",
+      "expected_document_names": ["enterprise-architecture.md"],
+      "required_key_points": ["持久", "事件循环", "跨", "Future"],
+      "should_refuse": false,
+      "tags": ["enterprise", "celery"]
+    },
+    {
+      "question": "自动评测运行会冻结哪些配置，并如何避免污染正常聊天数据？",
+      "reference_answer": "运行会冻结模型、TopK、阈值、分块参数和 Milvus alias；评测复用 LangGraph，但不创建 Conversation、ChatMessage 或普通聊天审计记录。",
+      "expected_document_names": ["enterprise-architecture.md"],
+      "required_key_points": ["TopK", "阈值", "Milvus alias", "Conversation", "ChatMessage"],
+      "should_refuse": false,
+      "tags": ["enterprise", "evaluation"]
+    },
+    {
+      "question": "当前企业版支持解析哪些主要文档格式？",
+      "reference_answer": "支持 TXT、Markdown、CSV、JSON、XML、PDF、DOCX、PPTX、XLSX、XLSM、XLS 和 HTML。",
+      "expected_document_names": ["enterprise-overview.md"],
+      "required_key_points": ["PDF", "DOCX", "PPTX", "XLSX", "HTML"],
+      "should_refuse": false,
+      "tags": ["enterprise", "parser"]
+    },
+    {
+      "question": "企业版 Redis 限流同时控制哪些层级和时间窗口？",
+      "reference_answer": "使用原子令牌桶限制用户和租户的分钟速率，同时记录用户和租户的每日配额。",
+      "expected_document_names": ["enterprise-overview.md"],
+      "required_key_points": ["用户", "租户", "分钟", "每日配额"],
+      "should_refuse": false,
+      "tags": ["enterprise", "redis"]
+    },
+    {
+      "question": "企业版飞书 Wiki 增量同步的主要流程是什么？",
+      "reference_answer": "递归读取 Wiki 节点，获取 docx、sheet、bitable 内容，对比 source_key 与更新时间或校验和，只排队变化文档，并为远端消失节点创建删除任务。",
+      "expected_document_names": ["enterprise-overview.md"],
+      "required_key_points": ["Wiki", "docx", "sheet", "bitable", "删除任务"],
+      "should_refuse": false,
+      "tags": ["enterprise", "feishu"]
+    },
+    {
+      "question": "当前身份 Header 为什么不能直接作为最终生产认证方案？",
+      "reference_answer": "Header 只是受保护内部网络中的网关集成边界，生产环境应由 OIDC/JWT 网关认证，并校验共享 secret。",
+      "expected_document_names": ["enterprise-overview.md", "enterprise-architecture.md"],
+      "required_key_points": ["OIDC", "JWT", "网关", "共享", "secret"],
+      "should_refuse": false,
+      "tags": ["enterprise", "security"]
+    },
+    {
+      "question": "第一版自动评测包含哪些确定性质量指标？",
+      "reference_answer": "包含 Recall@K、MRR、rerank 排序、引用 precision/recall、关键点覆盖率、拒答准确率、首 token 与总延迟。",
+      "expected_document_names": ["enterprise-overview.md", "enterprise-architecture.md"],
+      "required_key_points": ["Recall@K", "MRR", "关键点", "拒答", "延迟"],
+      "should_refuse": false,
+      "tags": ["enterprise", "evaluation"]
+    },
+    {
+      "question": "旧项目的启动时自动扫描目录在企业版中被替换成什么方案？",
+      "reference_answer": "替换为受控 root alias 加 Celery 异步扫描。",
+      "expected_document_names": ["legacy-capability-decisions.md"],
+      "required_key_points": ["root alias", "Celery", "异步扫描"],
+      "should_refuse": false,
+      "tags": ["migration", "ingestion"]
+    },
+    {
+      "question": "企业版如何处理批量 embedding 中的部分分块失败？",
+      "reference_answer": "批次失败后逐条重试，默认任何分块缺失都会拒绝发布新版本并保留旧索引。",
+      "expected_document_names": ["legacy-capability-decisions.md", "enterprise-overview.md"],
+      "required_key_points": ["逐条重试", "拒绝发布", "新版本", "旧索引"],
+      "should_refuse": false,
+      "tags": ["migration", "embedding"]
+    },
+    {
+      "question": "为什么企业版不继续使用业务错误统一返回 HTTP 200？",
+      "reference_answer": "企业版改用标准 HTTP 状态码和 RFC Problem Details，让错误语义、网关和监控行为正确。",
+      "expected_document_names": ["legacy-capability-decisions.md"],
+      "required_key_points": ["标准 HTTP 状态码", "RFC Problem Details"],
+      "should_refuse": false,
+      "tags": ["migration", "api"]
+    },
+    {
+      "question": "企业版如何处理直接信任 X-Forwarded-For 的旧设计？",
+      "reference_answer": "不再直接信任该请求头，只接受受保护网关传入的身份头，并校验共享 secret。",
+      "expected_document_names": ["legacy-capability-decisions.md"],
+      "required_key_points": ["受保护网关", "身份头", "共享 secret"],
+      "should_refuse": false,
+      "tags": ["migration", "security"]
+    },
+    {
+      "question": "旧版项目文档提供了哪三种向量数据库运行模式？",
+      "reference_answer": "提供 InMemory、Chroma 和 Milvus 三种模式。",
+      "expected_document_names": ["legacy-project-overview.md"],
+      "required_key_points": ["InMemory", "Chroma", "Milvus"],
+      "should_refuse": false,
+      "tags": ["legacy", "vector-store"]
+    },
+    {
+      "question": "旧版项目支持通过哪些方式导入文档？",
+      "reference_answer": "包括接口上传、启动或目录扫描以及飞书知识库同步等方式。",
+      "expected_document_names": ["legacy-project-overview.md"],
+      "required_key_points": ["上传", "扫描", "飞书"],
+      "should_refuse": false,
+      "tags": ["legacy", "ingestion"]
+    },
+    {
+      "question": "旧版 Java 项目的 Java 版本和核心 LangChain4j 依赖是什么？",
+      "reference_answer": "Java 版本为 1.8，核心依赖包括 langchain4j、langchain4j-open-ai、langchain4j-milvus、PDFBox 文档解析和 Chroma 集成。",
+      "expected_document_names": ["legacy-pom.xml"],
+      "required_key_points": ["1.8", "langchain4j-open-ai", "langchain4j-milvus", "chroma"],
+      "should_refuse": false,
+      "tags": ["legacy", "java"]
+    },
+    {
+      "question": "旧版前端页面的标题是什么，并包含哪个主要管理区域？",
+      "reference_answer": "页面标题为 RAG 智能问答，包含知识库管理区域。",
+      "expected_document_names": ["legacy-frontend.html"],
+      "required_key_points": ["RAG 智能问答", "知识库"],
+      "should_refuse": false,
+      "tags": ["legacy", "frontend"]
+    },
+    {
+      "question": "公司 2026 年年假审批需要经过哪几级主管？",
+      "reference_answer": "当前知识库没有人力资源审批制度，应明确说明无法回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["refusal", "hr"]
+    },
+    {
+      "question": "本季度产品销售额和利润率分别是多少？",
+      "reference_answer": "当前知识库没有销售和财务数据，应明确说明无法回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["refusal", "finance"]
+    },
+    {
+      "question": "客户甲的合同金额、付款节点和违约条款是什么？",
+      "reference_answer": "当前知识库没有客户合同，应明确说明无法回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["refusal", "contract"]
+    },
+    {
+      "question": "生产环境的公网域名、管理员密码和数据库密钥是什么？",
+      "reference_answer": "知识库不应包含或泄露生产凭据，应拒绝提供。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["refusal", "security"]
+    },
+    {
+      "question": "今天公司食堂午餐菜单有哪些菜？",
+      "reference_answer": "当前知识库没有食堂菜单，应明确说明无法回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["refusal", "operations"]
+    }
+  ]
+}

@@ -96,6 +96,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 - `APP_ADMIN_USER_IDS`：允许触发全量索引重建的用户 ID 集合。
 - `APP_SCAN_ROOTS`：可扫描目录别名映射；接口不能提交任意磁盘路径。
 - `APP_ALLOW_PARTIAL_INGESTION=false`：默认不接受缺失分块的部分索引。
+- `APP_CHUNK_SIZE=480`、`APP_CHUNK_OVERLAP=80`：为 512-token 级 embedding 模型保留来源前缀和中英文混排余量。
 - `APP_FEISHU_*`：飞书应用、空间、租户和目标知识库配置。
 
 请求身份边界当前为 `X-Tenant-Id`、`X-User-Id` 和可选的 `X-Identity-Secret`。生产环境应由 OIDC/JWT 网关完成认证，后端只信任受保护的内部网络身份头。
@@ -138,6 +139,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 
 每次运行固定保存当时的聊天模型、embedding、rerank、TopK、阈值和分块参数。第一版不使用 LLM-as-Judge，避免评测结果受额外模型随机性和成本影响；答案忠实度先通过预期文档引用、关键点覆盖和拒答准确率衡量，后续可在同一结果模型上增加可选裁判模型。
 
+首份真实评测集见 [`docs/evaluation-datasets/project-architecture-v1.json`](docs/evaluation-datasets/project-architecture-v1.json)，对应基线报告见 [`docs/evaluation-baselines/project-architecture-v1-2026-07-11.md`](docs/evaluation-baselines/project-architecture-v1-2026-07-11.md)。
+
 ## 飞书同步
 
 启用 `APP_FEISHU_ENABLED=true` 后，Celery Beat 每 12 小时触发一次同步。同步流程为：递归读取 Wiki 节点 → 获取 docx/sheet/bitable 内容 → 对比 `source_key` 与更新时间/校验和 → 只排队变化文档 → 为远端消失节点创建删除任务。Redis 分布式锁防止多个 Beat/Worker 重复同步。
@@ -154,6 +157,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：16 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过；API、PostgreSQL、Redis、Milvus、Worker、Beat 均已在 Docker 中运行。蓝绿重建、权限授权、目录扫描、任务失败补偿和异步删除已做真实端到端验证。
+当前验证结果：17 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过；API、PostgreSQL、Redis、Milvus、Worker、Beat 均已在 Docker 中运行。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和 25 条真实 RAG 基线评测已做端到端验证。
 
 模型密钥不属于仓库，因此真实 embedding/LLM 内容质量测试需要在 `infra/.env` 填入密钥后执行。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

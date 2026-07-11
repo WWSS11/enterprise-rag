@@ -77,8 +77,8 @@ class Settings(BaseSettings):
             ".htm",
         }
     )
-    chunk_size: int = Field(default=800, ge=100, le=8_000)
-    chunk_overlap: int = Field(default=100, ge=0, le=2_000)
+    chunk_size: int = Field(default=480, ge=100, le=8_000)
+    chunk_overlap: int = Field(default=80, ge=0, le=2_000)
     embedding_batch_size: int = Field(default=16, ge=1, le=256)
     allow_partial_ingestion: bool = False
     chat_rate_limit_per_minute: int = Field(default=30, ge=1)
