@@ -4,6 +4,7 @@ from uuid import UUID
 from redis.exceptions import LockError
 
 from app.core.config import get_settings
+from app.services.evaluation_service import execute_evaluation_run
 from app.services.feishu_service import prepare_feishu_sync
 from app.services.ingestion_service import delete_document, ingest_document, rebuild_vector_index
 from app.services.local_scan_service import discover_local_documents
@@ -124,3 +125,8 @@ def sync_feishu_task() -> dict[str, object]:
             task_id=dispatch.task_id,
         )
     return {"status": "queued", **stats}
+
+
+@celery_app.task(name="app.tasks.run_evaluation")
+def run_evaluation_task(run_id: str) -> dict[str, object]:
+    return run_async(execute_evaluation_run(UUID(run_id)))

@@ -11,6 +11,7 @@
 - 蓝绿向量索引重建：构建新物理集合、写入完成后原子切换 Milvus alias，并保留有限回滚版本。
 - Redis 原子令牌桶，同时限制用户/租户分钟速率和每日配额；Redis 故障默认拒绝高成本聊天请求。
 - Celery 异步解析、embedding、删除、受控目录扫描、索引重建和飞书同步；每个 Worker 子进程复用持久异步事件循环。
+- 内置 RAG 自动评测：评测数据集、标准问答、异步批量运行、配置快照和逐用例报告；确定性计算 Recall@K、MRR、引用、关键点、拒答与延迟指标。
 - 文档解析支持 TXT、Markdown、CSV、JSON、XML、PDF、DOCX（含表格）、PPTX、XLSX/XLSM、旧版 XLS、HTML。
 - 批量 embedding 失败后逐条重试；默认任一分块失败就保留旧索引并标记任务失败，可显式开启部分入库。
 - 飞书 Wiki 增量同步支持新版文档、电子表格和多维表格；基于远端更新时间/内容校验跳过未变化内容，并清理远端已删除文档。
@@ -113,6 +114,29 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 | `POST` | `/api/v1/chat/stream` | SSE：`metadata`、`stage`、`token`、`done/error` |
 | `GET` | `/api/v1/jobs/{id}` | 查询异步任务 |
 | `POST` | `/api/v1/jobs/rebuild-index` | 管理员触发蓝绿重建 |
+| `GET/POST` | `/api/v1/evaluations/datasets` | 查询或创建评测数据集 |
+| `POST` | `/api/v1/evaluations/datasets/{id}/cases` | 添加单条标准评测用例 |
+| `POST` | `/api/v1/evaluations/datasets/{id}/cases/bulk` | 批量添加标准评测用例 |
+| `POST` | `/api/v1/evaluations/runs` | 创建 Celery 异步评测运行 |
+| `GET` | `/api/v1/evaluations/runs/{id}` | 查询评测进度和汇总指标 |
+| `GET` | `/api/v1/evaluations/runs/{id}/report` | 查询逐用例评测报告 |
+
+## RAG 自动评测
+
+评测数据集必须绑定一个知识库。创建数据集、写入用例和发起运行需要该知识库的 `editor` 权限，查看结果需要 `reader` 权限。可回答用例必须填写至少一个已经入库且状态为 `ready` 的预期文档；拒答用例不能填写预期文档。
+
+```json
+{
+  "question": "Milvus 为什么适合企业知识库？",
+  "reference_answer": "Milvus 支持大规模向量检索和分布式部署。",
+  "expected_document_ids": ["文档 UUID"],
+  "required_key_points": ["大规模向量检索", "分布式部署"],
+  "should_refuse": false,
+  "tags": ["milvus", "architecture"]
+}
+```
+
+每次运行固定保存当时的聊天模型、embedding、rerank、TopK、阈值和分块参数。第一版不使用 LLM-as-Judge，避免评测结果受额外模型随机性和成本影响；答案忠实度先通过预期文档引用、关键点覆盖和拒答准确率衡量，后续可在同一结果模型上增加可选裁判模型。
 
 ## 飞书同步
 
@@ -130,6 +154,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：10 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过；API、PostgreSQL、Redis、Milvus、Worker、Beat 均已在 Docker 中运行。蓝绿重建、权限授权、目录扫描、任务失败补偿和异步删除已做真实端到端验证。
+当前验证结果：16 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过；API、PostgreSQL、Redis、Milvus、Worker、Beat 均已在 Docker 中运行。蓝绿重建、权限授权、目录扫描、任务失败补偿和异步删除已做真实端到端验证。
 
 模型密钥不属于仓库，因此真实 embedding/LLM 内容质量测试需要在 `infra/.env` 填入密钥后执行。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

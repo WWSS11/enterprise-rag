@@ -9,6 +9,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -191,3 +192,112 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class EvaluationDataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "evaluation_datasets"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_evaluation_datasets_tenant_name"),
+        Index("ix_evaluation_datasets_tenant_kb", "tenant_id", "knowledge_base_id"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    cases: Mapped[list[EvaluationCase]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
+    )
+    runs: Mapped[list[EvaluationRun]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class EvaluationCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "evaluation_cases"
+    __table_args__ = (Index("ix_evaluation_cases_dataset_created", "dataset_id", "created_at"),)
+
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.id", ondelete="CASCADE"), nullable=False
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    reference_answer: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_document_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    required_key_points: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    should_refuse: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    dataset: Mapped[EvaluationDataset] = relationship(back_populates="cases")
+    results: Mapped[list[EvaluationResult]] = relationship(
+        back_populates="case", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class EvaluationRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (
+        Index("ix_evaluation_runs_tenant_status", "tenant_id", "status"),
+        Index("ix_evaluation_runs_dataset_created", "dataset_id", "created_at"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_datasets.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    task_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_cases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completed_cases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_cases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    dataset: Mapped[EvaluationDataset] = relationship(back_populates="runs")
+    results: Mapped[list[EvaluationResult]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class EvaluationResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "evaluation_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "case_id", name="uq_evaluation_results_run_case"),
+        Index("ix_evaluation_results_run_status", "run_id", "status"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    case_id: Mapped[UUID] = mapped_column(
+        ForeignKey("evaluation_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), default="succeeded", nullable=False)
+    rewritten_query: Mapped[str | None] = mapped_column(Text)
+    answer: Mapped[str | None] = mapped_column(Text)
+    retrieved_documents: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    reranked_documents: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    first_token_ms: Mapped[float | None] = mapped_column(Float)
+    total_latency_ms: Mapped[float | None] = mapped_column(Float)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[EvaluationRun] = relationship(back_populates="results")
+    case: Mapped[EvaluationCase] = relationship(back_populates="results")
