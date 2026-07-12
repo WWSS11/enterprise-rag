@@ -28,7 +28,10 @@ from app.schemas.evaluation import (
     EvaluationRunRead,
 )
 from app.services.audit_service import record_audit
-from app.services.evaluation_service import build_config_snapshot
+from app.services.evaluation_service import (
+    build_config_snapshot,
+    recalculate_evaluation_run_metrics,
+)
 from app.services.knowledge_base_service import knowledge_base_service
 from app.workers.tasks import run_evaluation_task
 
@@ -339,6 +342,31 @@ async def get_run(
 ) -> EvaluationRun:
     run, _ = await _authorize_run(db, run_id, *identity)
     return run
+
+
+@router.post("/runs/{run_id}/recalculate", response_model=EvaluationRunRead)
+async def recalculate_run_metrics(
+    run_id: UUID,
+    identity: tuple[str, str] = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationRun:
+    tenant_id, user_id = identity
+    run = await db.get(EvaluationRun, run_id)
+    if run is None or run.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="evaluation run not found")
+    await _authorize_dataset(db, run.dataset_id, tenant_id, user_id, "editor")
+    recalculated = await recalculate_evaluation_run_metrics(run.id)
+    record_audit(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        action="evaluations.metrics_recalculated",
+        resource_type="evaluation_run",
+        resource_id=str(run.id),
+        details={"dataset_id": str(run.dataset_id)},
+    )
+    await db.commit()
+    return recalculated
 
 
 @router.get("/runs/{run_id}/report", response_model=EvaluationReport)

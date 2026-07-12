@@ -21,6 +21,7 @@ from app.schemas.document import (
 )
 from app.services.audit_service import record_audit
 from app.services.knowledge_base_service import knowledge_base_service
+from app.services.source_path_service import portable_source_uri, resolve_source_uri
 from app.workers.tasks import (
     delete_document_task,
     ingest_document_task,
@@ -145,7 +146,7 @@ async def upload_document(
     path = upload_dir / safe_name
     await asyncio.to_thread(upload_dir.mkdir, parents=True, exist_ok=True)
     await asyncio.to_thread(path.write_bytes, content)
-    document.source_uri = str(path.resolve())
+    document.source_uri = portable_source_uri(path)
 
     task_id = str(uuid4())
     job = IngestionJob(
@@ -234,7 +235,7 @@ async def reindex_document(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     if not document.source_uri:
         raise HTTPException(status_code=409, detail="document has no reusable source file")
-    source_path = Path(document.source_uri)
+    source_path = resolve_source_uri(document.source_uri)
     if not await asyncio.to_thread(source_path.is_file):
         raise HTTPException(status_code=409, detail="document source file is unavailable")
     if document.status in {"processing", "deleting"}:

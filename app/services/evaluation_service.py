@@ -25,6 +25,9 @@ REFUSAL_MARKERS = (
     "无法根据提供的资料",
     "不知道",
     "无法回答",
+    "没有给出",
+    "未提供",
+    "没有包含",
 )
 
 
@@ -65,7 +68,9 @@ def ranking_metrics(
 
 def detect_refusal(answer: str, citations: list[dict[str, Any]]) -> bool:
     normalized_answer = normalize_for_matching(answer)
-    return not citations and any(
+    # Citations may legitimately justify why the available corpus cannot answer.
+    # Refusal is determined by the answer semantics, not by citation count.
+    return any(
         normalize_for_matching(marker) in normalized_answer for marker in REFUSAL_MARKERS
     )
 
@@ -247,6 +252,41 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
         }
     )
     return summary
+
+
+async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
+    """Recompute deterministic metrics from persisted outputs without model calls."""
+
+    async with AsyncSessionFactory() as db:
+        run = await db.get(EvaluationRun, run_id)
+        if run is None:
+            raise LookupError("evaluation run not found")
+        rows = list(
+            (
+                await db.execute(
+                    select(EvaluationResult, EvaluationCase)
+                    .join(EvaluationCase, EvaluationCase.id == EvaluationResult.case_id)
+                    .where(EvaluationResult.run_id == run.id)
+                )
+            ).all()
+        )
+        for result, case in rows:
+            if result.status != "succeeded":
+                continue
+            result.metrics = calculate_case_metrics(
+                answer=result.answer or "",
+                retrieved=result.retrieved_documents,
+                reranked=result.reranked_documents,
+                citations=result.citations,
+                expected_document_ids=case.expected_document_ids,
+                required_key_points=case.required_key_points,
+                should_refuse=case.should_refuse,
+            )
+        results = [result for result, _ in rows]
+        run.summary = summarize_results(results)
+        await db.commit()
+        await db.refresh(run)
+        return run
 
 
 async def execute_evaluation_run(run_id: UUID) -> dict[str, Any]:

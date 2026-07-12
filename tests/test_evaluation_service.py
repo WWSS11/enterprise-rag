@@ -62,6 +62,21 @@ def test_refusal_case_is_measured_without_expected_documents() -> None:
     assert metrics["refusal_correct"] is True
 
 
+def test_refusal_can_cite_material_that_confirms_information_is_missing() -> None:
+    metrics = calculate_case_metrics(
+        answer="资料中没有给出管理员密码，因此我不知道具体值。",
+        retrieved=[{"document_id": "context-document"}],
+        reranked=[{"document_id": "context-document"}],
+        citations=[{"document_id": "context-document"}],
+        expected_document_ids=[],
+        required_key_points=[],
+        should_refuse=True,
+    )
+
+    assert metrics["actual_refusal"] is True
+    assert metrics["refusal_correct"] is True
+
+
 def test_evaluation_case_ground_truth_validation() -> None:
     with pytest.raises(ValidationError):
         EvaluationCaseCreate(
@@ -84,3 +99,4 @@ def test_evaluation_routes_are_exposed() -> None:
     assert "/api/v1/evaluations/datasets/{dataset_id}/cases/bulk" in paths
     assert "/api/v1/evaluations/runs" in paths
     assert "/api/v1/evaluations/runs/{run_id}/report" in paths
+    assert "/api/v1/evaluations/runs/{run_id}/recalculate" in paths
