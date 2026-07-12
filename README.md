@@ -166,11 +166,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
   "question": "Milvus 为什么适合企业知识库？",
   "reference_answer": "Milvus 支持大规模向量检索和分布式部署。",
   "expected_document_ids": ["文档 UUID"],
+  "acceptable_citation_document_ids": ["文档 UUID", "可选支持文档 UUID"],
   "required_key_points": ["大规模向量检索", "分布式部署"],
   "should_refuse": false,
   "tags": ["milvus", "architecture"]
 }
 ```
+
+`expected_document_ids` 表示必须召回的权威主文档，用于 Recall/MRR；`acceptable_citation_document_ids` 表示允许答案引用的直接支持文档，只用于 Citation Precision。主文档会自动并入允许引用集合。
 
 每次运行固定保存当时的聊天模型、embedding、rerank、TopK、阈值和分块参数。第一版不使用 LLM-as-Judge，避免评测结果受额外模型随机性和成本影响；答案忠实度先通过预期文档引用、关键点覆盖和拒答准确率衡量，后续可在同一结果模型上增加可选裁判模型。
 
@@ -181,6 +184,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 HTML metadata 与答案实际引用优化后的 V2.1 报告见 [`docs/evaluation-baselines/project-architecture-v2.1-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2.1-2026-07-12.md)。
 
 rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-architecture-v2.2-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2.2-2026-07-12.md)。
+
+检索主文档与允许引用文档分离后的审计见 [`docs/evaluation-baselines/project-architecture-v2.3-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2.3-2026-07-12.md)。
 
 ## 飞书同步
 
@@ -198,6 +203,6 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：30 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和四轮 25 条真实 RAG 基线评测已做端到端验证。
+当前验证结果：32 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、四轮 25 条真实 RAG 基线评测和一次引用 ground-truth 审计已做端到端验证。
 
 模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

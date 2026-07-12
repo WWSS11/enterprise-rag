@@ -298,6 +298,9 @@ class EvaluationCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     reference_answer: Mapped[str] = mapped_column(Text, nullable=False)
     expected_document_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    acceptable_citation_document_ids: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     required_key_points: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     should_refuse: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)

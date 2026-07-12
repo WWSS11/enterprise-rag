@@ -86,12 +86,16 @@ def calculate_case_metrics(
     reranked: list[dict[str, Any]],
     citations: list[dict[str, Any]],
     expected_document_ids: list[str],
+    acceptable_citation_document_ids: list[str] | None = None,
     required_key_points: list[str],
     should_refuse: bool,
 ) -> dict[str, Any]:
     retrieval = ranking_metrics(retrieved, expected_document_ids)
     rerank = ranking_metrics(reranked, expected_document_ids)
     expected = set(expected_document_ids)
+    acceptable_citations = set(
+        acceptable_citation_document_ids or expected_document_ids
+    )
     cited = set(ranked_document_ids(citations))
     answer_normalized = normalize_for_matching(answer)
     matched_key_points = [
@@ -107,7 +111,9 @@ def calculate_case_metrics(
         "rerank_recall_at_k": rerank["recall"],
         "rerank_mrr": rerank["mrr"],
         "citation_precision": (
-            len(cited.intersection(expected)) / len(cited) if cited and expected else None
+            len(cited.intersection(acceptable_citations)) / len(cited)
+            if cited and acceptable_citations
+            else None
         ),
         "citation_recall": (
             len(cited.intersection(expected)) / len(expected) if expected else None
@@ -207,6 +213,7 @@ async def execute_rag_case(
         reranked=reranked,
         citations=citations,
         expected_document_ids=case.expected_document_ids,
+        acceptable_citation_document_ids=case.acceptable_citation_document_ids,
         required_key_points=case.required_key_points,
         should_refuse=case.should_refuse,
     )
@@ -316,6 +323,9 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
                 reranked=result.reranked_documents,
                 citations=result.citations,
                 expected_document_ids=case.expected_document_ids,
+                acceptable_citation_document_ids=(
+                    case.acceptable_citation_document_ids
+                ),
                 required_key_points=case.required_key_points,
                 should_refuse=case.should_refuse,
             )

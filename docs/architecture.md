@@ -80,3 +80,5 @@ Celery prefork 子进程不会为每个任务反复创建事件循环。`app/wor
 评测数据集绑定单一知识库，标准用例保存预期文档、关键点和拒答标签。API 创建运行时冻结当前模型、TopK、阈值、分块参数和 Milvus alias，Celery Worker 随后复用同一 LangGraph 工作流逐条执行，但不创建 Conversation、ChatMessage 或普通聊天审计记录。
 
 每条结果保留原始检索顺序、rerank 顺序、引用、答案和延迟，再计算 Recall@K、MRR、引用 precision/recall、关键点覆盖率和拒答准确率。运行可按已经存在的 `run_id + case_id` 结果续跑，避免 Worker 中断后重复消耗全部模型额度。PostgreSQL 保存评测事实，报告 API 只聚合已持久化结果，因此后续增加可选 LLM-as-Judge 或不同检索策略时不需要重做数据模型。
+
+评测用例将检索主文档 `expected_document_ids` 与允许引用文档 `acceptable_citation_document_ids` 分开。前者衡量检索是否找到权威依据，后者衡量答案引用是否落在直接支持材料内，避免为了提升 Citation Precision 而人为放宽 Recall ground truth。

@@ -23,6 +23,7 @@
       "question": "PostgreSQL、Milvus 和 Redis 在企业版中分别承担什么角色？",
       "reference_answer": "PostgreSQL 是业务事实源，Milvus 是可重建的检索投影，Redis 用于短期状态与协调。",
       "expected_document_names": ["enterprise-architecture.md"],
+      "acceptable_citation_document_names": ["enterprise-architecture.md", "enterprise-overview.md", "enterprise-tech-stack.md"],
       "required_key_points": ["业务事实源", "检索投影", "短期状态", "协调"],
       "should_refuse": false,
       "tags": ["enterprise", "storage"]
@@ -47,6 +48,7 @@
       "question": "为什么 Celery Worker 子进程要复用持久异步事件循环？",
       "reference_answer": "为了避免 SQLAlchemy AsyncEngine、redis-py 和异步 HTTP 客户端跨事件循环复用 Future。",
       "expected_document_names": ["enterprise-architecture.md"],
+      "acceptable_citation_document_names": ["enterprise-architecture.md", "enterprise-overview.md"],
       "required_key_points": ["持久", "事件循环", "跨", "Future"],
       "should_refuse": false,
       "tags": ["enterprise", "celery"]
@@ -55,6 +57,7 @@
       "question": "自动评测运行会冻结哪些配置，并如何避免污染正常聊天数据？",
       "reference_answer": "运行会冻结模型、TopK、阈值、分块参数和 Milvus alias；评测复用 LangGraph，但不创建 Conversation、ChatMessage 或普通聊天审计记录。",
       "expected_document_names": ["enterprise-architecture.md"],
+      "acceptable_citation_document_names": ["enterprise-architecture.md", "enterprise-overview.md"],
       "required_key_points": ["TopK", "阈值", "Milvus alias", "Conversation", "ChatMessage"],
       "should_refuse": false,
       "tags": ["enterprise", "evaluation"]
@@ -63,6 +66,7 @@
       "question": "当前企业版支持解析哪些主要文档格式？",
       "reference_answer": "支持 TXT、Markdown、CSV、JSON、XML、PDF、DOCX、PPTX、XLSX、XLSM、XLS 和 HTML。",
       "expected_document_names": ["enterprise-overview.md"],
+      "acceptable_citation_document_names": ["enterprise-overview.md", "enterprise-architecture.md"],
       "required_key_points": ["PDF", "DOCX", "PPTX", "XLSX", "HTML"],
       "should_refuse": false,
       "tags": ["enterprise", "parser"]
@@ -111,6 +115,7 @@
       "question": "企业版如何处理批量 embedding 中的部分分块失败？",
       "reference_answer": "批次失败后逐条重试，默认任何分块缺失都会拒绝发布新版本并保留旧索引。",
       "expected_document_names": ["legacy-capability-decisions.md", "enterprise-overview.md"],
+      "acceptable_citation_document_names": ["legacy-capability-decisions.md", "enterprise-overview.md", "enterprise-architecture.md"],
       "required_key_points": ["逐条重试", "拒绝发布", "新版本", "旧索引"],
       "should_refuse": false,
       "tags": ["migration", "embedding"]
@@ -119,6 +124,7 @@
       "question": "为什么企业版不继续使用业务错误统一返回 HTTP 200？",
       "reference_answer": "企业版改用标准 HTTP 状态码和 RFC Problem Details，让错误语义、网关和监控行为正确。",
       "expected_document_names": ["legacy-capability-decisions.md"],
+      "acceptable_citation_document_names": ["legacy-capability-decisions.md", "legacy-project-overview.md", "enterprise-overview.md"],
       "required_key_points": ["标准 HTTP 状态码", "RFC Problem Details"],
       "should_refuse": false,
       "tags": ["migration", "api"]
@@ -127,6 +133,7 @@
       "question": "企业版如何处理直接信任 X-Forwarded-For 的旧设计？",
       "reference_answer": "不再直接信任该请求头，只接受受保护网关传入的身份头，并校验共享 secret。",
       "expected_document_names": ["legacy-capability-decisions.md"],
+      "acceptable_citation_document_names": ["legacy-capability-decisions.md", "enterprise-overview.md"],
       "required_key_points": ["受保护网关", "身份头", "共享 secret"],
       "should_refuse": false,
       "tags": ["migration", "security"]
@@ -151,6 +158,7 @@
       "question": "旧版 Java 项目的 Java 版本和核心 LangChain4j 依赖是什么？",
       "reference_answer": "Java 版本为 1.8，核心依赖包括 langchain4j、langchain4j-open-ai、langchain4j-milvus、PDFBox 文档解析和 Chroma 集成。",
       "expected_document_names": ["legacy-pom.xml"],
+      "acceptable_citation_document_names": ["legacy-pom.xml", "legacy-project-overview.md"],
       "required_key_points": ["1.8", "langchain4j-open-ai", "langchain4j-milvus", "chroma"],
       "should_refuse": false,
       "tags": ["legacy", "java"]

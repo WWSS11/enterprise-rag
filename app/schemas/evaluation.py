@@ -29,6 +29,9 @@ class EvaluationCaseCreate(BaseModel):
     question: str = Field(min_length=1, max_length=8_000)
     reference_answer: str = Field(min_length=1, max_length=32_000)
     expected_document_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    acceptable_citation_document_ids: list[UUID] = Field(
+        default_factory=list, max_length=100
+    )
     required_key_points: list[str] = Field(default_factory=list, max_length=100)
     should_refuse: bool = False
     tags: list[str] = Field(default_factory=list, max_length=50)
@@ -36,12 +39,19 @@ class EvaluationCaseCreate(BaseModel):
     @model_validator(mode="after")
     def validate_ground_truth(self) -> Self:
         self.expected_document_ids = list(dict.fromkeys(self.expected_document_ids))
+        self.acceptable_citation_document_ids = list(
+            dict.fromkeys(
+                [*self.expected_document_ids, *self.acceptable_citation_document_ids]
+            )
+        )
         self.required_key_points = list(
             dict.fromkeys(point.strip() for point in self.required_key_points if point.strip())
         )
         self.tags = list(dict.fromkeys(tag.strip() for tag in self.tags if tag.strip()))
-        if self.should_refuse and self.expected_document_ids:
-            raise ValueError("refusal cases cannot declare expected documents")
+        if self.should_refuse and (
+            self.expected_document_ids or self.acceptable_citation_document_ids
+        ):
+            raise ValueError("refusal cases cannot declare expected or citation documents")
         if not self.should_refuse and not self.expected_document_ids:
             raise ValueError("answerable cases require at least one expected document")
         return self
@@ -59,6 +69,7 @@ class EvaluationCaseRead(BaseModel):
     question: str
     reference_answer: str
     expected_document_ids: list[str]
+    acceptable_citation_document_ids: list[str]
     required_key_points: list[str]
     should_refuse: bool
     tags: list[str]
@@ -117,6 +128,7 @@ class EvaluationResultReport(EvaluationResultRead):
     question: str
     reference_answer: str
     expected_document_ids: list[str]
+    acceptable_citation_document_ids: list[str]
     required_key_points: list[str]
     should_refuse: bool
     tags: list[str]

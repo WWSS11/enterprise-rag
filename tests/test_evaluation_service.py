@@ -118,6 +118,26 @@ def test_case_metrics_record_rerank_fallback() -> None:
     assert metrics["rerank_fallback_reason"] == "timeout"
 
 
+def test_citation_precision_can_allow_secondary_supporting_documents() -> None:
+    metrics = calculate_case_metrics(
+        answer="答案",
+        retrieved=[{"document_id": "primary"}],
+        reranked=[{"document_id": "primary"}],
+        citations=[
+            {"document_id": "primary"},
+            {"document_id": "supporting"},
+        ],
+        expected_document_ids=["primary"],
+        acceptable_citation_document_ids=["primary", "supporting"],
+        required_key_points=[],
+        should_refuse=False,
+    )
+
+    assert metrics["retrieval_recall_at_k"] == 1.0
+    assert metrics["citation_precision"] == 1.0
+    assert metrics["citation_recall"] == 1.0
+
+
 def test_evaluation_case_ground_truth_validation() -> None:
     with pytest.raises(ValidationError):
         EvaluationCaseCreate(
@@ -132,6 +152,20 @@ def test_evaluation_case_ground_truth_validation() -> None:
             should_refuse=True,
             expected_document_ids=[uuid4()],
         )
+
+
+def test_expected_documents_are_always_acceptable_citations() -> None:
+    primary = uuid4()
+    supporting = uuid4()
+
+    case = EvaluationCaseCreate(
+        question="问题",
+        reference_answer="答案",
+        expected_document_ids=[primary],
+        acceptable_citation_document_ids=[supporting],
+    )
+
+    assert case.acceptable_citation_document_ids == [primary, supporting]
 
 
 def test_evaluation_routes_are_exposed() -> None:
