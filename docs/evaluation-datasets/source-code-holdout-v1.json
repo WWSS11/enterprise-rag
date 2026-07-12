@@ -1,0 +1,255 @@
+{
+  "name": "源码实现独立验证集 v1",
+  "description": "不复用项目架构基线语料，直接使用当前实现源码验证分块、检索、重排、任务幂等和评测逻辑。20 条可回答问题与 5 条拒答问题在语料入库前固定。",
+  "knowledge_base": {
+    "slug": "source-code-holdout-v1",
+    "name": "源码实现独立验证集 v1",
+    "description": "用于验证当前 RAG 对源码和配置类长文档的泛化能力。",
+    "access_mode": "restricted"
+  },
+  "documents": [
+    {
+      "source_path": "app/services/chunking_service.py",
+      "upload_name": "chunking-service.py.txt"
+    },
+    {
+      "source_path": "app/services/job_control_service.py",
+      "upload_name": "job-control-service.py.txt"
+    },
+    {
+      "source_path": "app/services/ingestion_service.py",
+      "upload_name": "ingestion-service.py.txt"
+    },
+    {
+      "source_path": "app/services/milvus_service.py",
+      "upload_name": "milvus-service.py.txt"
+    },
+    {
+      "source_path": "app/services/rerank_service.py",
+      "upload_name": "rerank-service.py.txt"
+    },
+    {
+      "source_path": "app/services/evaluation_service.py",
+      "upload_name": "evaluation-service.py.txt"
+    },
+    {
+      "source_path": "app/rag/graph.py",
+      "upload_name": "rag-graph.py.txt"
+    },
+    {
+      "source_path": "app/workers/celery_app.py",
+      "upload_name": "celery-app.py.txt"
+    },
+    {
+      "source_path": "app/api/v1/documents.py",
+      "upload_name": "documents-api.py.txt"
+    },
+    {
+      "source_path": "migrations/versions/20260712_0006_job_concurrency_guards.py",
+      "upload_name": "job-concurrency-migration.py.txt"
+    }
+  ],
+  "cases": [
+    {
+      "question": "语义断点检测会在哪些 atomic 单元之间建立候选，并如何限制断点数量？",
+      "reference_answer": "只考虑同一 source section 内、当前单元类型为 prose 的相邻 atomic；按余弦相似度从低到高排序，最多取配置百分位对应的少量位置，并要求相似度低于阈值。默认百分位为 15%，阈值为 0.58。",
+      "expected_document_names": ["chunking-service.py.txt"],
+      "required_key_points": ["同一", "source section", "prose", "15%", "0.58"],
+      "should_refuse": false,
+      "tags": ["holdout", "chunking", "semantic"]
+    },
+    {
+      "question": "硬切分函数如何保证面对异常 token 截断结果时仍然会向前推进？",
+      "reference_answer": "它先调用 truncate_to_tokens；如果结果为空，就至少取 remaining 的第一个字符，然后从 remaining 中移除该片段，因此每轮至少消费一个字符。",
+      "expected_document_names": ["chunking-service.py.txt"],
+      "required_key_points": ["truncate_to_tokens", "第一个字符", "至少", "消费"],
+      "should_refuse": false,
+      "tags": ["holdout", "chunking", "termination"]
+    },
+    {
+      "question": "retrieval chunk 加 overlap 后，代码如何避免 local_start 停在原位置形成死循环？",
+      "reference_answer": "下一起点使用 max(local_start + 1, next_start)，无论 overlap 计算返回什么，local_start 都至少增加 1。",
+      "expected_document_names": ["chunking-service.py.txt"],
+      "required_key_points": ["max", "local_start + 1", "至少增加 1"],
+      "should_refuse": false,
+      "tags": ["holdout", "chunking", "overlap"]
+    },
+    {
+      "question": "PostgreSQL advisory lock 的 64 位 key 是如何从命名空间和资源生成的？",
+      "reference_answer": "将 namespace:resource 编码后使用 BLAKE2b 生成 8 字节摘要，再按 big endian 转成有符号整数。",
+      "expected_document_names": ["job-control-service.py.txt"],
+      "required_key_points": ["BLAKE2b", "8", "big", "有符号"],
+      "should_refuse": false,
+      "tags": ["holdout", "locking", "postgresql"]
+    },
+    {
+      "question": "普通文档任务和全量索引重建如何利用同一个 advisory lock key 实现并行与互斥？",
+      "reference_answer": "普通文档任务使用全局共享锁，因此不同文档任务可以并行；全量重建对同一个 key 使用独占锁，所以会与所有文档维护任务互斥。",
+      "expected_document_names": ["job-control-service.py.txt"],
+      "required_key_points": ["共享锁", "独占锁", "同一个", "互斥"],
+      "should_refuse": false,
+      "tags": ["holdout", "locking", "rebuild"]
+    },
+    {
+      "question": "多个 advisory lock 按什么顺序获取和释放，为什么这样处理？",
+      "reference_answer": "按传入顺序获取，并按相反顺序释放；这保持嵌套锁的栈式释放顺序，并在异常时清理已经成功获取的锁。",
+      "expected_document_names": ["job-control-service.py.txt"],
+      "required_key_points": ["传入顺序", "相反顺序", "异常", "释放"],
+      "should_refuse": false,
+      "tags": ["holdout", "locking", "cleanup"]
+    },
+    {
+      "question": "Celery late-ack 任务重新投递时，文档入库如何复用原来的目标索引版本？",
+      "reference_answer": "任务第一次 claim 时把 previous_index_version 和 target_index_version 写入 IngestionJob.result；状态已经是 running 的重投会读取并复用 target_index_version，而不是生成新版本。",
+      "expected_document_names": ["ingestion-service.py.txt"],
+      "required_key_points": ["IngestionJob.result", "target_index_version", "running", "复用"],
+      "should_refuse": false,
+      "tags": ["holdout", "ingestion", "idempotency"]
+    },
+    {
+      "question": "任务重投时如果 Document.index_version 已等于 target_index_version，会发生什么？",
+      "reference_answer": "系统认为新版本已经发布，不再重新解析和 embedding，而是把任务补记为 succeeded、进度设为 100，并将文档恢复为 ready。",
+      "expected_document_names": ["ingestion-service.py.txt"],
+      "required_key_points": ["已经发布", "succeeded", "100", "ready"],
+      "should_refuse": false,
+      "tags": ["holdout", "ingestion", "redelivery"]
+    },
+    {
+      "question": "新文档版本发布成功后，Milvus 旧向量使用什么条件清理？",
+      "reference_answer": "只调用 delete_document_version 删除记录下来的 previous_index_version，不使用删除除新版本外所有版本的宽泛条件。",
+      "expected_document_names": ["ingestion-service.py.txt"],
+      "required_key_points": ["delete_document_version", "previous_index_version", "指定", "旧版本"],
+      "should_refuse": false,
+      "tags": ["holdout", "ingestion", "milvus"]
+    },
+    {
+      "question": "文档处于 reindexing 状态时，查询链路为什么仍能使用旧索引？",
+      "reference_answer": "检索 PostgreSQL 活动版本时接受 ready 和 reindexing 状态，并要求 index_version 非空；Milvus 命中还必须与 PostgreSQL 当前 index_version 一致，因此重新入库期间仍使用已发布旧版本。",
+      "expected_document_names": ["rag-graph.py.txt"],
+      "acceptable_citation_document_names": ["rag-graph.py.txt", "ingestion-service.py.txt"],
+      "required_key_points": ["reindexing", "index_version", "非空", "一致"],
+      "should_refuse": false,
+      "tags": ["holdout", "retrieval", "availability"]
+    },
+    {
+      "question": "Milvus dense 向量索引采用什么类型、距离度量和构建参数？",
+      "reference_answer": "使用 HNSW 和 COSINE，构建参数 M=32、efConstruction=200；查询时 ef=128。",
+      "expected_document_names": ["milvus-service.py.txt"],
+      "required_key_points": ["HNSW", "COSINE", "32", "200", "128"],
+      "should_refuse": false,
+      "tags": ["holdout", "milvus", "dense"]
+    },
+    {
+      "question": "Milvus 的 sparse/BM25 字段是如何生成和建立索引的？",
+      "reference_answer": "embedding_content 开启 jieba analyzer，Milvus BM25 Function 将其生成 sparse_vector，再使用 SPARSE_INVERTED_INDEX、BM25 距离和 DAAT_MAXSCORE 建索引。",
+      "expected_document_names": ["milvus-service.py.txt"],
+      "required_key_points": ["jieba", "BM25 Function", "sparse_vector", "SPARSE_INVERTED_INDEX", "DAAT_MAXSCORE"],
+      "should_refuse": false,
+      "tags": ["holdout", "milvus", "sparse"]
+    },
+    {
+      "question": "Dense 与 BM25 两路召回结果如何融合？",
+      "reference_answer": "系统分别构造 dense 和 sparse AnnSearchRequest，然后通过 RRFRanker 融合，RRF 的 k 使用 hybrid_rrf_k 配置。",
+      "expected_document_names": ["milvus-service.py.txt"],
+      "required_key_points": ["AnnSearchRequest", "RRFRanker", "hybrid_rrf_k"],
+      "should_refuse": false,
+      "tags": ["holdout", "milvus", "rrf"]
+    },
+    {
+      "question": "rerank 服务只会针对哪些故障进行重试？",
+      "reference_answer": "只重试 timeout、传输层 RequestError、HTTP 429 和 HTTP 5xx；其他 4xx 与无效响应不重试。",
+      "expected_document_names": ["rerank-service.py.txt"],
+      "required_key_points": ["timeout", "RequestError", "429", "5xx", "不重试"],
+      "should_refuse": false,
+      "tags": ["holdout", "rerank", "retry"]
+    },
+    {
+      "question": "外部 rerank 最终失败后，系统如何继续回答并记录原因？",
+      "reference_answer": "保留 hybrid/RRF 原始顺序截取 top_k，给文档标记 rerank_status=fallback、尝试次数和 rerank_fallback_reason，然后继续生成。",
+      "expected_document_names": ["rerank-service.py.txt"],
+      "required_key_points": ["hybrid", "top_k", "fallback", "rerank_fallback_reason"],
+      "should_refuse": false,
+      "tags": ["holdout", "rerank", "fallback"]
+    },
+    {
+      "question": "评测中的 MRR 如何处理同一文档多个 chunk 重复出现的情况？",
+      "reference_answer": "先按排名顺序对 document_id 去重，再寻找第一个预期文档的文档级排名，MRR 为该排名的倒数。",
+      "expected_document_names": ["evaluation-service.py.txt"],
+      "required_key_points": ["document_id", "去重", "第一个", "倒数"],
+      "should_refuse": false,
+      "tags": ["holdout", "evaluation", "mrr"]
+    },
+    {
+      "question": "拒答检测为什么只检查答案开头，并检查多长的规范化文本？",
+      "reference_answer": "为了避免答案后面的局部保留说明被误判成整题拒答，只检查第一个段落形成的开头结论，并截取规范化后的前 180 个字符匹配拒答标记。",
+      "expected_document_names": ["evaluation-service.py.txt"],
+      "required_key_points": ["第一个段落", "局部", "180", "拒答标记"],
+      "should_refuse": false,
+      "tags": ["holdout", "evaluation", "refusal"]
+    },
+    {
+      "question": "什么情况下 LangGraph 会调用 LLM 重写用户查询？",
+      "reference_answer": "只有存在历史消息，并且去空白后的问题少于 5 个字符，或者包含“这、它、上述、之前、该”等指代标记时才重写。",
+      "expected_document_names": ["rag-graph.py.txt"],
+      "required_key_points": ["历史消息", "少于 5", "指代", "重写"],
+      "should_refuse": false,
+      "tags": ["holdout", "langgraph", "rewrite"]
+    },
+    {
+      "question": "Celery 为什么同时配置 task_acks_late、worker_prefetch_multiplier=1 和 task_reject_on_worker_lost？",
+      "reference_answer": "任务完成后才确认，Worker 每次只预取一个任务，并在 Worker 丢失时把任务退回队列，从而支持长任务故障后的重新投递并减少单个 Worker 囤积任务。",
+      "expected_document_names": ["celery-app.py.txt"],
+      "required_key_points": ["完成后", "预取一个", "Worker 丢失", "重新投递"],
+      "should_refuse": false,
+      "tags": ["holdout", "celery", "delivery"]
+    },
+    {
+      "question": "重新索引接口和数据库迁移分别如何阻止同一文档出现两个活动任务？",
+      "reference_answer": "API 使用 SELECT FOR UPDATE 锁住文档行并检查 active_document_job；数据库再用部分唯一索引约束 document_id 在 queued/running 状态下只能出现一次。",
+      "expected_document_names": ["documents-api.py.txt", "job-concurrency-migration.py.txt"],
+      "required_key_points": ["SELECT FOR UPDATE", "active_document_job", "部分唯一索引", "queued", "running"],
+      "should_refuse": false,
+      "tags": ["holdout", "api", "concurrency"]
+    },
+    {
+      "question": "该系统的年度绩效奖金按什么公式计算？",
+      "reference_answer": "当前源码知识库不包含人力资源奖金制度，应拒绝回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["holdout", "refusal", "hr"]
+    },
+    {
+      "question": "生产数据库当前保存了多少客户订单？",
+      "reference_answer": "当前源码知识库没有实时生产订单数据，应拒绝回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["holdout", "refusal", "database"]
+    },
+    {
+      "question": "请提供硅基流动账户当前剩余 token 额度。",
+      "reference_answer": "源码知识库不包含外部账户实时余额，应拒绝回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["holdout", "refusal", "account"]
+    },
+    {
+      "question": "公司与客户甲合同中的违约金比例是多少？",
+      "reference_answer": "当前源码知识库没有客户合同，应拒绝回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["holdout", "refusal", "contract"]
+    },
+    {
+      "question": "明天上海办公室有哪些会议室空闲？",
+      "reference_answer": "当前源码知识库没有会议室日程，应拒绝回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": ["holdout", "refusal", "calendar"]
+    }
+  ]
+}
