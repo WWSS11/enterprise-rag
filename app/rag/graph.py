@@ -178,7 +178,13 @@ async def rerank(state: RagState) -> RagState:
         state.get("retrieved", []),
         settings.rerank_top_k,
     )
-    return {"reranked": items}
+    first = items[0] if items else {}
+    return {
+        "reranked": items,
+        "rerank_status": str(first.get("rerank_status", "empty")),
+        "rerank_attempts": int(first.get("rerank_attempts", 0)),
+        "rerank_fallback_reason": first.get("rerank_fallback_reason"),
+    }
 
 
 async def expand_context(state: RagState) -> RagState:

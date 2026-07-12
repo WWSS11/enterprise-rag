@@ -95,6 +95,29 @@ def test_later_missing_detail_caveat_is_not_a_full_refusal() -> None:
     assert metrics["refusal_correct"] is True
 
 
+def test_case_metrics_record_rerank_fallback() -> None:
+    metrics = calculate_case_metrics(
+        answer="答案",
+        retrieved=[{"document_id": "expected"}],
+        reranked=[
+            {
+                "document_id": "expected",
+                "rerank_status": "fallback",
+                "rerank_attempts": 2,
+                "rerank_fallback_reason": "timeout",
+            }
+        ],
+        citations=[{"document_id": "expected"}],
+        expected_document_ids=["expected"],
+        required_key_points=[],
+        should_refuse=False,
+    )
+
+    assert metrics["rerank_fallback"] is True
+    assert metrics["rerank_attempts"] == 2
+    assert metrics["rerank_fallback_reason"] == "timeout"
+
+
 def test_evaluation_case_ground_truth_validation() -> None:
     with pytest.raises(ValidationError):
         EvaluationCaseCreate(

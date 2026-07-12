@@ -121,6 +121,20 @@ def calculate_case_metrics(
         "expected_refusal": should_refuse,
         "actual_refusal": actual_refusal,
         "refusal_correct": actual_refusal == should_refuse,
+        "rerank_fallback": any(
+            item.get("rerank_status") == "fallback" for item in reranked
+        ),
+        "rerank_attempts": max(
+            (int(item.get("rerank_attempts", 0)) for item in reranked), default=0
+        ),
+        "rerank_fallback_reason": next(
+            (
+                item.get("rerank_fallback_reason")
+                for item in reranked
+                if item.get("rerank_fallback_reason")
+            ),
+            None,
+        ),
     }
 
 
@@ -134,6 +148,9 @@ def build_config_snapshot() -> dict[str, Any]:
         "embedding_dimension": settings.embedding_dimension,
         "rerank_enabled": settings.rerank_enabled,
         "rerank_model": settings.rerank_model if settings.rerank_enabled else None,
+        "rerank_timeout_seconds": settings.rerank_timeout_seconds,
+        "rerank_max_attempts": settings.rerank_max_attempts,
+        "rerank_retry_base_seconds": settings.rerank_retry_base_seconds,
         "retrieval_top_k": settings.retrieval_top_k,
         "rerank_top_k": settings.rerank_top_k,
         "score_threshold": settings.score_threshold,
@@ -230,6 +247,16 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
         for result in results
         if result.status == "succeeded" and "refusal_correct" in result.metrics
     ]
+    fallback_values = [
+        float(bool(result.metrics.get("rerank_fallback")))
+        for result in results
+        if result.status == "succeeded"
+    ]
+    retry_values = [
+        float(int(result.metrics.get("rerank_attempts", 0)) > 1)
+        for result in results
+        if result.status == "succeeded"
+    ]
     first_token_values = [
         result.first_token_ms
         for result in results
@@ -244,6 +271,12 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
         {
             "refusal_accuracy": (
                 round(fmean(refusal_values), 6) if refusal_values else None
+            ),
+            "rerank_fallback_rate": (
+                round(fmean(fallback_values), 6) if fallback_values else None
+            ),
+            "rerank_retry_rate": (
+                round(fmean(retry_values), 6) if retry_values else None
             ),
             "average_first_token_ms": (
                 round(fmean(first_token_values), 2) if first_token_values else None

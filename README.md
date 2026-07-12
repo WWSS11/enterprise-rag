@@ -8,6 +8,7 @@
 - LangGraph 显式 `rewrite_query → hybrid_retrieve → rerank → expand_context → generate` 工作流；先重排小块，再扩展父级上下文。
 - PostgreSQL 保存文档 section、atomic、retrieval、parent 层级关系以及权限、会话、任务和审计事实，全部由 Alembic 管理。
 - Milvus 使用 Dense Vector + 内置 BM25 双路召回和 RRF 融合，并按租户、知识库过滤；PostgreSQL 会过滤失效向量版本。
+- 外部 rerank 支持可配置短重试、失败分类和 RRF fallback；在线链路暴露 Prometheus operation/attempt/latency 指标，离线评测保存 retry/fallback 比例。
 - 蓝绿向量索引重建：构建新物理集合、写入完成后原子切换 Milvus alias，并保留有限回滚版本。
 - Redis 原子令牌桶，同时限制用户/租户分钟速率和每日配额；Redis 故障默认拒绝高成本聊天请求。
 - Celery 异步解析、embedding、删除、受控目录扫描、索引重建和飞书同步；每个 Worker 子进程复用持久异步事件循环。
@@ -126,6 +127,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 - `APP_RETRIEVAL_CHUNK_TARGET_TOKENS=320`、`APP_RETRIEVAL_CHUNK_OVERLAP_TOKENS=48`：实际写入 Milvus 并参与召回的子块。
 - `APP_PARENT_CHUNK_MAX_TOKENS=960`：rerank 后用于生成阶段扩展的父级块。
 - `APP_EMBEDDING_CONTEXT_MAX_TOKENS=400`：包含文档名、章节路径和位置元数据的 embedding 输入预算，适配当前 512-token 级 BGE 模型。
+- `APP_RERANK_TIMEOUT_SECONDS=30`、`APP_RERANK_MAX_ATTEMPTS=2`：只对瞬时网络、429 和 5xx 做一次短重试，失败后快速回退 RRF。
 - `APP_SEMANTIC_CHUNKING_ENABLED=true`、`APP_SEMANTIC_BREAK_PERCENTILE=15`：只把相邻 atomic 中差异最大的少量位置作为语义断点，避免过度切碎。
 - `APP_CONTEXT_NEIGHBOR_WINDOW=1`：rerank 后扩展命中父节及前后相邻章节，再受总 token 预算限制。
 - `APP_FEISHU_*`：飞书应用、空间、租户和目标知识库配置。
@@ -178,6 +180,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 
 HTML metadata 与答案实际引用优化后的 V2.1 报告见 [`docs/evaluation-baselines/project-architecture-v2.1-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2.1-2026-07-12.md)。
 
+rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-architecture-v2.2-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2.2-2026-07-12.md)。
+
 ## 飞书同步
 
 启用 `APP_FEISHU_ENABLED=true` 后，Celery Beat 每 12 小时触发一次同步。同步流程为：递归读取 Wiki 节点 → 获取 docx/sheet/bitable 内容 → 对比 `source_key` 与更新时间/校验和 → 只排队变化文档 → 为远端消失节点创建删除任务。Redis 分布式锁防止多个 Beat/Worker 重复同步。
@@ -194,6 +198,6 @@ HTML metadata 与答案实际引用优化后的 V2.1 报告见 [`docs/evaluation
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：27 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和三轮 25 条真实 RAG 基线评测已做端到端验证。
+当前验证结果：30 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和四轮 25 条真实 RAG 基线评测已做端到端验证。
 
 模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

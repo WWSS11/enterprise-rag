@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     rerank_api_key: str = ""
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_enabled: bool = True
+    rerank_timeout_seconds: float = Field(default=30.0, gt=0.0, le=120.0)
+    rerank_max_attempts: int = Field(default=2, ge=1, le=5)
+    rerank_retry_base_seconds: float = Field(default=0.5, ge=0.0, le=10.0)
 
     retrieval_top_k: int = 40
     rerank_top_k: int = 8

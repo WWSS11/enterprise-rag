@@ -13,6 +13,21 @@ HTTP_LATENCY = Histogram(
     "HTTP request latency",
     ["method", "route"],
 )
+RERANK_REQUESTS = Counter(
+    "rag_rerank_requests_total",
+    "Total rerank operations by final outcome",
+    ["outcome", "reason"],
+)
+RERANK_ATTEMPTS = Counter(
+    "rag_rerank_attempts_total",
+    "Total external rerank HTTP attempts",
+    ["outcome"],
+)
+RERANK_LATENCY = Histogram(
+    "rag_rerank_duration_seconds",
+    "End-to-end rerank operation latency including retries",
+    ["outcome"],
+)
 
 router = APIRouter()
 
