@@ -272,10 +272,43 @@ def _parse_xls(path: Path) -> list[ParsedSection]:
 
 def _parse_html(path: Path) -> list[ParsedSection]:
     soup = BeautifulSoup(_read_text(path), "html.parser")
+    page_title = _clean(soup.title.get_text(" ", strip=True)) if soup.title else ""
+    overview_parts: list[str] = []
+    if page_title:
+        overview_parts.append(f"页面标题：{page_title}")
+    brands = list(
+        dict.fromkeys(
+            text
+            for element in soup.select('[class*="brand"]')
+            if (text := _clean(element.get_text(" ", strip=True)))
+        )
+    )
+    if brands:
+        overview_parts.append(f"页面品牌：{'；'.join(brands[:5])}")
+    major_areas = list(
+        dict.fromkeys(
+            text
+            for element in soup.find_all(["h1", "h2", "h3"])
+            if (text := _clean(element.get_text(" ", strip=True)))
+        )
+    )
+    if major_areas:
+        overview_parts.append(f"主要界面区域：{'；'.join(major_areas[:20])}")
+
     for tag in soup(["script", "style", "noscript", "nav", "footer", "header"]):
         tag.decompose()
 
     sections: list[ParsedSection] = []
+    if overview_parts:
+        sections.append(
+            ParsedSection(
+                text="\n".join(overview_parts),
+                title=page_title or "页面概览",
+                heading_path=((page_title or "页面概览"),),
+                section_type="metadata",
+                metadata={"html_title": page_title},
+            )
+        )
     headings: list[str] = []
     current_title: str | None = None
     body: list[str] = []

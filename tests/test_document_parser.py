@@ -45,3 +45,21 @@ def test_parse_markdown_preserves_heading_hierarchy(tmp_path) -> None:
         ("企业知识库", "检索层"),
     ]
     assert sections[1].title == "检索层"
+
+
+def test_parse_html_preserves_page_title_and_major_areas(tmp_path) -> None:
+    path = tmp_path / "legacy.html"
+    path.write_text(
+        """
+        <html><head><title>RAG 智能问答</title></head>
+        <body><a class="sidebar-brand"><span>RAG Chat</span></a>
+        <h2>知识库</h2><p>上传并管理文档</p></body></html>
+        """,
+        encoding="utf-8",
+    )
+
+    sections = parse_document_sections(path)
+
+    assert "页面标题：RAG 智能问答" in sections[0].text
+    assert "页面品牌：RAG Chat" in sections[0].text
+    assert "主要界面区域：知识库" in sections[0].text

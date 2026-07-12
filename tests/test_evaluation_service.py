@@ -77,6 +77,24 @@ def test_refusal_can_cite_material_that_confirms_information_is_missing() -> Non
     assert metrics["refusal_correct"] is True
 
 
+def test_later_missing_detail_caveat_is_not_a_full_refusal() -> None:
+    metrics = calculate_case_metrics(
+        answer=(
+            "系统会先批量处理，失败后逐条重试，并保留旧索引。\n\n"
+            "资料未提供部分入库时的界面展示细节。"
+        ),
+        retrieved=[{"document_id": "expected"}],
+        reranked=[{"document_id": "expected"}],
+        citations=[{"document_id": "expected"}],
+        expected_document_ids=["expected"],
+        required_key_points=["逐条重试", "保留旧索引"],
+        should_refuse=False,
+    )
+
+    assert metrics["actual_refusal"] is False
+    assert metrics["refusal_correct"] is True
+
+
 def test_evaluation_case_ground_truth_validation() -> None:
     with pytest.raises(ValidationError):
         EvaluationCaseCreate(

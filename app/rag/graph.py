@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
@@ -18,6 +19,9 @@ from app.services.model_provider import get_chat_model, get_embedding_model
 from app.services.rerank_service import rerank_service
 
 logger = structlog.get_logger(__name__)
+SOURCE_MARKER = re.compile(
+    r"\[来源:(?P<document_name>[^\]#]+?)(?:#chunk-(?P<chunk_index>\d+))?\]"
+)
 
 ANAPHORA_MARKERS = (
     "这",
@@ -51,6 +55,32 @@ def needs_query_rewrite(question: str, history: list[dict[str, str]]) -> bool:
         return False
     compact = "".join(question.split())
     return len(compact) < 5 or any(marker in compact for marker in ANAPHORA_MARKERS)
+
+
+def select_answer_citations(
+    answer: str, candidates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return only sources explicitly referenced by the generated answer."""
+
+    selected: list[dict[str, Any]] = []
+    seen_chunk_ids: set[str] = set()
+    for match in SOURCE_MARKER.finditer(answer):
+        document_name = match.group("document_name").strip()
+        chunk_index = match.group("chunk_index")
+        candidate = next(
+            (
+                item
+                for item in candidates
+                if item["document_name"] == document_name
+                and (chunk_index is None or int(item["chunk_index"]) == int(chunk_index))
+            ),
+            None,
+        )
+        if candidate is None or candidate["chunk_id"] in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(candidate["chunk_id"])
+        selected.append(candidate)
+    return selected
 
 
 async def rewrite_query(state: RagState) -> RagState:
@@ -260,11 +290,12 @@ async def expand_context(state: RagState) -> RagState:
 
 async def generate(state: RagState, writer: StreamWriter) -> RagState:
     documents = state.get("expanded", state.get("reranked", []))
-    citations = [
+    context_sources = [
         {
             "document_id": item["document_id"],
             "document_name": item["document_name"],
             "chunk_id": item["chunk_id"],
+            "chunk_index": item["chunk_index"],
             "score": item.get("rerank_score", item["score"]),
             "content_preview": item["content"][:180],
         }
@@ -286,7 +317,7 @@ async def generate(state: RagState, writer: StreamWriter) -> RagState:
             "请补充更具体的关键词，或先导入相关文档。"
         )
         writer({"type": "token", "token": answer})
-        return {"answer": answer, "citations": []}
+        return {"answer": answer, "citations": [], "context_sources": []}
 
     system = (
         "你是企业知识库助手。只能依据给定资料回答，不得使用资料之外的事实补全答案。"
@@ -305,13 +336,18 @@ async def generate(state: RagState, writer: StreamWriter) -> RagState:
         answer_parts.append(token)
         writer({"type": "token", "token": token})
     answer = "".join(answer_parts).strip()
+    citations = select_answer_citations(answer, context_sources)
     await logger.ainfo(
         "rag_graph_completed",
         tenant_id=state["tenant_id"],
         retrieved=len(state.get("retrieved", [])),
         reranked=len(documents),
     )
-    return {"answer": answer, "citations": citations}
+    return {
+        "answer": answer,
+        "citations": citations,
+        "context_sources": context_sources,
+    }
 
 
 @lru_cache

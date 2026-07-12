@@ -176,6 +176,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 
 多粒度混合检索 V2 报告见 [`docs/evaluation-baselines/project-architecture-v2-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2-2026-07-12.md)。
 
+HTML metadata 与答案实际引用优化后的 V2.1 报告见 [`docs/evaluation-baselines/project-architecture-v2.1-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2.1-2026-07-12.md)。
+
 ## 飞书同步
 
 启用 `APP_FEISHU_ENABLED=true` 后，Celery Beat 每 12 小时触发一次同步。同步流程为：递归读取 Wiki 节点 → 获取 docx/sheet/bitable 内容 → 对比 `source_key` 与更新时间/校验和 → 只排队变化文档 → 为远端消失节点创建删除任务。Redis 分布式锁防止多个 Beat/Worker 重复同步。
@@ -192,6 +194,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：23 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和两轮 25 条真实 RAG 基线评测已做端到端验证。
+当前验证结果：27 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和三轮 25 条真实 RAG 基线评测已做端到端验证。
 
 模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

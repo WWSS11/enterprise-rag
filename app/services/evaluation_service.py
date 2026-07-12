@@ -69,9 +69,13 @@ def ranking_metrics(
 def detect_refusal(answer: str, citations: list[dict[str, Any]]) -> bool:
     normalized_answer = normalize_for_matching(answer)
     # Citations may legitimately justify why the available corpus cannot answer.
-    # Refusal is determined by the answer semantics, not by citation count.
+    # Only inspect the opening conclusion so a later caveat such as "未提供更多细节"
+    # does not turn an otherwise complete answer into a refusal.
+    opening_paragraph = answer.split("\n\n", 1)[0]
+    normalized_opening = normalize_for_matching(opening_paragraph)
+    refusal_scope = (normalized_opening or normalized_answer)[:180]
     return any(
-        normalize_for_matching(marker) in normalized_answer for marker in REFUSAL_MARKERS
+        normalize_for_matching(marker) in refusal_scope for marker in REFUSAL_MARKERS
     )
 
 
