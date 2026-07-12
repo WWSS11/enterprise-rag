@@ -22,8 +22,15 @@ from app.services.chunking_service import (
     RetrievalDraft,
     build_chunk_hierarchy,
     build_chunk_hierarchy_async,
+    estimate_tokens,
 )
 from app.services.document_parser import ParsedSection, parse_document_sections
+from app.services.job_control_service import (
+    INDEX_MAINTENANCE_LOCK,
+    INDEX_REBUILD_LOCK,
+    advisory_locks,
+    document_index_lock,
+)
 from app.services.milvus_service import milvus_service
 from app.services.model_provider import get_embedding_model
 
@@ -46,6 +53,16 @@ class ChunkDraft:
 class EmbeddedChunk:
     draft: ChunkDraft
     vector: list[float]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentJobClaim:
+    should_run: bool
+    result: dict[str, object]
+    previous_index_version: str | None = None
+    target_index_version: str | None = None
+    resumed: bool = False
+    already_published: bool = False
 
 
 async def _set_job_state(
@@ -215,7 +232,7 @@ def _vector_rows(
                 heading_path=list(item.draft.heading_path),
                 atomic_start_index=item.draft.atomic_start_index,
                 atomic_end_index=item.draft.atomic_end_index,
-                token_count=max(1, len(item.draft.content) // 2),
+                token_count=estimate_tokens(item.draft.content),
                 source_metadata=metadata,
             )
         )
@@ -241,20 +258,148 @@ def _vector_rows(
     return rows, section_models, atomic_models, models
 
 
-async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[str, object]:
-    await _set_job_state(job_id, status="running", progress=5)
-    old_index_version: str | None = None
-    new_index_version = uuid4().hex
-    inserted_new_version = False
-    try:
-        async with AsyncSessionFactory() as db:
-            document = await db.get(Document, document_id)
-            if document is None:
-                raise LookupError(f"document not found: {document_id}")
-            old_index_version = document.index_version
-            document.status = "processing"
-            await db.commit()
+async def _claim_document_ingestion(
+    document_id: UUID, job_id: UUID
+) -> DocumentJobClaim:
+    async with AsyncSessionFactory() as db:
+        job = await db.scalar(
+            select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
+        )
+        if job is None:
+            raise LookupError(f"ingestion job not found: {job_id}")
+        if job.status == "succeeded":
+            return DocumentJobClaim(should_run=False, result=dict(job.result))
+        if job.status == "failed":
+            return DocumentJobClaim(
+                should_run=False,
+                result={
+                    "document_id": str(document_id),
+                    "status": "skipped",
+                    "reason": "job already failed",
+                },
+            )
+        if job.document_id != document_id or job.job_type not in {
+            "document_ingestion",
+            "document_reindex",
+        }:
+            raise ValueError(f"job {job_id} does not own document ingestion {document_id}")
 
+        document = await db.scalar(
+            select(Document).where(Document.id == document_id).with_for_update()
+        )
+        if document is None:
+            raise LookupError(f"document not found: {document_id}")
+
+        stored = dict(job.result)
+        previous_raw = stored.get("previous_index_version", document.index_version)
+        previous_index_version = str(previous_raw) if previous_raw else None
+        target_raw = stored.get("target_index_version")
+        target_index_version = str(target_raw) if target_raw else uuid4().hex
+
+        if document.index_version == target_index_version:
+            result: dict[str, object] = {
+                "document_id": str(document_id),
+                "chunk_count": document.chunk_count,
+                "index_version": target_index_version,
+            }
+            job.status = "succeeded"
+            job.progress = 100
+            job.result = result
+            job.error_message = None
+            document.status = "ready"
+            document.error_message = None
+            await db.commit()
+            return DocumentJobClaim(
+                should_run=False,
+                result=result,
+                previous_index_version=previous_index_version,
+                target_index_version=target_index_version,
+                resumed=True,
+                already_published=True,
+            )
+
+        resumed = job.status == "running"
+        job.status = "running"
+        job.progress = max(job.progress, 5)
+        job.error_message = None
+        job.result = {
+            "previous_index_version": previous_index_version,
+            "target_index_version": target_index_version,
+        }
+        document.status = "reindexing" if previous_index_version else "processing"
+        document.error_message = None
+        await db.commit()
+        return DocumentJobClaim(
+            should_run=True,
+            result={},
+            previous_index_version=previous_index_version,
+            target_index_version=target_index_version,
+            resumed=resumed,
+        )
+
+
+async def _document_version_is_active(document_id: UUID, index_version: str) -> bool:
+    async with AsyncSessionFactory() as db:
+        document = await db.get(Document, document_id)
+        return document is not None and document.index_version == index_version
+
+
+async def _fail_document_ingestion(
+    document_id: UUID,
+    job_id: UUID,
+    previous_index_version: str | None,
+    error: Exception,
+) -> None:
+    async with AsyncSessionFactory() as db:
+        job = await db.scalar(
+            select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
+        )
+        document = await db.scalar(
+            select(Document).where(Document.id == document_id).with_for_update()
+        )
+        if job is not None and job.status != "succeeded":
+            job.status = "failed"
+            job.progress = 100
+            job.error_message = str(error)[:4_000]
+        if document is not None:
+            document.status = "ready" if previous_index_version else "failed"
+            document.error_message = str(error)[:4_000]
+        await db.commit()
+
+
+async def _ingest_document_locked(
+    document_id: UUID, job_id: UUID, path: Path
+) -> dict[str, object]:
+    claim = await _claim_document_ingestion(document_id, job_id)
+    if not claim.should_run:
+        if (
+            claim.already_published
+            and claim.previous_index_version
+            and claim.previous_index_version != claim.target_index_version
+        ):
+            try:
+                await milvus_service.delete_document_version(
+                    str(document_id), claim.previous_index_version
+                )
+            except Exception as exc:
+                await logger.awarning(
+                    "stale_document_vectors_cleanup_failed",
+                    document_id=str(document_id),
+                    index_version=claim.previous_index_version,
+                    error=str(exc),
+                )
+        return claim.result
+
+    previous_index_version = claim.previous_index_version
+    target_index_version = claim.target_index_version
+    if target_index_version is None:
+        raise RuntimeError("ingestion claim did not allocate an index version")
+
+    try:
+        if claim.resumed:
+            await milvus_service.delete_document_version(
+                str(document_id), target_index_version
+            )
         sections = await asyncio.to_thread(parse_document_sections, path)
         if not sections:
             raise ValueError("document contains no extractable text")
@@ -270,19 +415,30 @@ async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[s
                 raise ValueError("document contains no indexable chunks")
             embedded = await embed_chunk_drafts(drafts)
             rows, section_models, atomic_models, chunk_models = _vector_rows(
-                document, hierarchy, embedded, new_index_version
+                document, hierarchy, embedded, target_index_version
             )
         await _set_job_state(job_id, status="running", progress=65)
 
         await milvus_service.insert(rows)
-        inserted_new_version = True
         await _set_job_state(job_id, status="running", progress=82)
 
+        result: dict[str, object] = {
+            "document_id": str(document_id),
+            "chunk_count": len(chunk_models),
+            "index_version": target_index_version,
+        }
         async with AsyncSessionFactory() as db:
-            document = await db.get(Document, document_id)
-            if document is None:
-                raise LookupError(f"document disappeared during ingestion: {document_id}")
-            await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+            document = await db.scalar(
+                select(Document).where(Document.id == document_id).with_for_update()
+            )
+            job = await db.scalar(
+                select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
+            )
+            if document is None or job is None:
+                raise LookupError("document or ingestion job disappeared before publish")
+            await db.execute(
+                delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
+            )
             await db.execute(
                 delete(DocumentAtomicUnit).where(DocumentAtomicUnit.document_id == document_id)
             )
@@ -291,107 +447,190 @@ async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[s
             )
             db.add_all([*section_models, *atomic_models, *chunk_models])
             document.status = "ready"
-            document.index_version = new_index_version
+            document.index_version = target_index_version
             document.indexed_at = datetime.now(UTC)
             document.chunk_count = len(chunk_models)
             document.error_message = None
+            job.status = "succeeded"
+            job.progress = 100
+            job.result = result
+            job.error_message = None
             await db.commit()
 
-        try:
-            await milvus_service.delete_document(
-                str(document_id), keep_index_version=new_index_version
-            )
-        except Exception as exc:
-            await logger.awarning(
-                "stale_document_vectors_cleanup_failed",
-                document_id=str(document_id),
-                error=str(exc),
-            )
+        if previous_index_version and previous_index_version != target_index_version:
+            try:
+                await milvus_service.delete_document_version(
+                    str(document_id), previous_index_version
+                )
+            except Exception as exc:
+                await logger.awarning(
+                    "stale_document_vectors_cleanup_failed",
+                    document_id=str(document_id),
+                    index_version=previous_index_version,
+                    error=str(exc),
+                )
 
-        result: dict[str, object] = {
-            "document_id": str(document_id),
-            "chunk_count": len(chunk_models),
-            "index_version": new_index_version,
-        }
-        await _set_job_state(job_id, status="succeeded", progress=100, result=result)
         await logger.ainfo("document_ingested", **result)
         return result
     except Exception as exc:
-        if inserted_new_version:
-            try:
-                await milvus_service.delete_document_version(
-                    str(document_id), new_index_version
-                )
-            except Exception:
-                await logger.aexception(
-                    "failed_to_compensate_new_vectors", document_id=str(document_id)
-                )
-        async with AsyncSessionFactory() as db:
-            document = await db.get(Document, document_id)
-            if document is not None:
-                document.status = "ready" if old_index_version else "failed"
-                document.error_message = str(exc)[:4_000]
-                await db.commit()
-        await _set_job_state(
-            job_id,
-            status="failed",
-            progress=100,
-            error_message=str(exc)[:4_000],
+        if await _document_version_is_active(document_id, target_index_version):
+            await logger.awarning(
+                "document_publish_confirmed_after_error",
+                document_id=str(document_id),
+                index_version=target_index_version,
+                error=str(exc),
+            )
+            return {
+                "document_id": str(document_id),
+                "index_version": target_index_version,
+                "status": "published",
+            }
+        try:
+            await milvus_service.delete_document_version(str(document_id), target_index_version)
+        except Exception:
+            await logger.aexception(
+                "failed_to_compensate_new_vectors", document_id=str(document_id)
+            )
+        await _fail_document_ingestion(
+            document_id, job_id, previous_index_version, exc
         )
         await logger.aexception("document_ingestion_failed", document_id=str(document_id))
         raise
 
 
+async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[str, object]:
+    async with advisory_locks(
+        [INDEX_MAINTENANCE_LOCK, document_index_lock(document_id)]
+    ):
+        return await _ingest_document_locked(document_id, job_id, path)
+
+
 async def delete_document(document_id: UUID, job_id: UUID) -> dict[str, object]:
-    await _set_job_state(job_id, status="running", progress=20)
-    await milvus_service.delete_document(str(document_id))
-    await _set_job_state(job_id, status="running", progress=70)
-    async with AsyncSessionFactory() as db:
-        document = await db.get(Document, document_id)
-        if document is not None:
-            await db.delete(document)
-        await db.commit()
-    result: dict[str, object] = {"document_id": str(document_id), "deleted": True}
-    await _set_job_state(job_id, status="succeeded", progress=100, result=result)
-    return result
-
-
-async def rebuild_vector_index() -> dict[str, object]:
-    collection = await milvus_service.new_rebuild_collection()
-    inserted = 0
-    try:
+    async with advisory_locks(
+        [INDEX_MAINTENANCE_LOCK, document_index_lock(document_id)]
+    ):
         async with AsyncSessionFactory() as db:
-            result = await db.stream(
-                select(DocumentChunk, Document.name)
-                .join(Document, Document.id == DocumentChunk.document_id)
-                .where(
-                    Document.status == "ready",
-                    Document.index_version == DocumentChunk.index_version,
-                )
-                .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
-                .execution_options(yield_per=500)
+            job = await db.scalar(
+                select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
             )
-            batch: list[tuple[DocumentChunk, str]] = []
-            async for chunk, document_name in result:
-                batch.append((chunk, document_name))
-                if len(batch) < get_settings().embedding_batch_size:
-                    continue
-                inserted += await _insert_rebuild_batch(collection, batch)
-                batch.clear()
-            if batch:
-                inserted += await _insert_rebuild_batch(collection, batch)
+            if job is None:
+                raise LookupError(f"deletion job not found: {job_id}")
+            if job.status == "succeeded":
+                return dict(job.result)
+            if job.status == "failed":
+                return {
+                    "document_id": str(document_id),
+                    "status": "skipped",
+                    "reason": "job already failed",
+                }
+            if job.document_id != document_id or job.job_type != "document_deletion":
+                raise ValueError(f"job {job_id} does not own document deletion {document_id}")
+            job.status = "running"
+            job.progress = max(job.progress, 20)
+            await db.commit()
 
-        await milvus_service.switch_alias(collection)
-        dropped = await milvus_service.cleanup_old_collections(collection)
-        return {
-            "collection": collection,
-            "status": "ready",
-            "vector_count": inserted,
-            "dropped_collections": dropped,
-        }
-    except Exception:
-        await milvus_service.drop_collection(collection)
-        raise
+        try:
+            await milvus_service.delete_document(str(document_id))
+            result: dict[str, object] = {"document_id": str(document_id), "deleted": True}
+            async with AsyncSessionFactory() as db:
+                job = await db.scalar(
+                    select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
+                )
+                document = await db.scalar(
+                    select(Document).where(Document.id == document_id).with_for_update()
+                )
+                if job is None:
+                    raise LookupError(f"deletion job disappeared: {job_id}")
+                job.status = "succeeded"
+                job.progress = 100
+                job.result = result
+                job.error_message = None
+                if document is not None:
+                    await db.delete(document)
+                await db.commit()
+            return result
+        except Exception as exc:
+            async with AsyncSessionFactory() as db:
+                job = await db.get(IngestionJob, job_id)
+                document = await db.get(Document, document_id)
+                if job is not None and job.status != "succeeded":
+                    job.status = "failed"
+                    job.progress = 100
+                    job.error_message = str(exc)[:4_000]
+                if document is not None:
+                    document.status = "ready" if document.index_version else "failed"
+                    document.error_message = str(exc)[:4_000]
+                await db.commit()
+            raise
+
+
+async def rebuild_vector_index(job_id: UUID | None = None) -> dict[str, object]:
+    async with advisory_locks([INDEX_REBUILD_LOCK]):
+        if job_id is not None:
+            async with AsyncSessionFactory() as db:
+                job = await db.scalar(
+                    select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
+                )
+                if job is None:
+                    raise LookupError(f"index rebuild job not found: {job_id}")
+                if job.status == "succeeded":
+                    return dict(job.result)
+                if job.status == "failed":
+                    return {"status": "skipped", "reason": "job already failed"}
+                if job.job_type != "vector_index_rebuild":
+                    raise ValueError(f"job {job_id} is not an index rebuild")
+                job.status = "running"
+                job.progress = max(job.progress, 5)
+                await db.commit()
+
+        collection = await milvus_service.new_rebuild_collection()
+        inserted = 0
+        try:
+            async with AsyncSessionFactory() as db:
+                result = await db.stream(
+                    select(DocumentChunk, Document.name)
+                    .join(Document, Document.id == DocumentChunk.document_id)
+                    .where(
+                        Document.index_version.is_not(None),
+                        Document.status.in_(("ready", "reindexing")),
+                        Document.index_version == DocumentChunk.index_version,
+                    )
+                    .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
+                    .execution_options(yield_per=500)
+                )
+                batch: list[tuple[DocumentChunk, str]] = []
+                async for chunk, document_name in result:
+                    batch.append((chunk, document_name))
+                    if len(batch) < get_settings().embedding_batch_size:
+                        continue
+                    inserted += await _insert_rebuild_batch(collection, batch)
+                    batch.clear()
+                if batch:
+                    inserted += await _insert_rebuild_batch(collection, batch)
+
+            await milvus_service.switch_alias(collection)
+            dropped = await milvus_service.cleanup_old_collections(collection)
+            output: dict[str, object] = {
+                "collection": collection,
+                "status": "ready",
+                "vector_count": inserted,
+                "dropped_collections": dropped,
+            }
+            if job_id is not None:
+                await _set_job_state(
+                    job_id, status="succeeded", progress=100, result=output
+                )
+            return output
+        except Exception as exc:
+            await milvus_service.drop_collection(collection)
+            if job_id is not None:
+                await _set_job_state(
+                    job_id,
+                    status="failed",
+                    progress=100,
+                    error_message=str(exc)[:4_000],
+                )
+            raise
 
 
 async def _insert_rebuild_batch(

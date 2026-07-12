@@ -37,23 +37,26 @@ sequenceDiagram
 ## 文档入库 Saga
 
 1. API 计算 SHA-256，在知识库范围内去重，保存文件和 `queued` 任务。
+   PostgreSQL 部分唯一索引保证同一文档最多只有一个 `queued/running` 任务。
 2. Worker 解析结构化 section，保留标题路径、PDF 页码、PPT 页、Excel Sheet 和表格类型等来源元数据。
 3. section 拆成 atomic 单元，再按 token 预算和相邻 embedding 语义边界构建 retrieval chunk 与 parent chunk。
 4. retrieval chunk 补充文档名、章节路径和位置上下文后批量 embedding；批次失败时逐条重试。atomic 与 parent 只存 PostgreSQL，不扩大向量索引。
 5. 以新的 `index_version` 写入 Milvus，但旧版本仍可检索。
 6. PostgreSQL 单事务替换 section、atomic、retrieval 元数据并切换文档活动版本。
-7. 提交成功后清理 Milvus 旧版本；清理失败时，查询链路仍会依据 PostgreSQL 活动版本丢弃陈旧命中。
+7. 提交成功后只按已记录的旧 `index_version` 清理 Milvus，避免并发任务使用“删除除自己以外所有版本”的宽泛条件；清理失败时，查询链路仍会依据 PostgreSQL 活动版本丢弃陈旧命中。
 8. PostgreSQL 提交前失败会补偿删除新向量；已有可用版本的文档恢复为 `ready`。
 
 这种设计不是跨 PostgreSQL/Milvus 的伪分布式事务，而是可恢复、可重试的 Saga。
 
+文档入库和删除在 Worker 中持有“索引维护共享 advisory lock + 文档独占 advisory lock”。不同文档可以并行，同一文档只能串行；Worker 异常退出时 PostgreSQL 会自动释放会话锁。Celery late-ack 重投会复用任务中持久化的目标 `index_version`，先清理该版本可能存在的半成品，再继续执行；如果 PostgreSQL 已经发布该版本，则只补齐任务完成状态和旧版本清理。
+
 ## 蓝绿重建
 
-全量重建从 PostgreSQL 的活动 chunks 重新生成向量，写入新的 Milvus 物理集合。所有数据写完后通过 `alter_alias` 原子切换 `rag_chunks_current`，旧集合保留有限数量用于快速回滚。构建失败时只删除新集合，不影响线上 alias。
+全量重建从 PostgreSQL 的活动 chunks 重新生成向量，写入新的 Milvus 物理集合。所有数据写完后通过 `alter_alias` 原子切换 `rag_chunks_current`，旧集合保留有限数量用于快速回滚。构建失败时只删除新集合，不影响线上 alias。全量重建持有索引维护独占 advisory lock，因此不会与文档入库、重新入库或删除交错，避免 alias 切换后遗漏刚发布的文档版本。
 
 ## 多粒度检索
 
-Milvus 只索引 retrieval chunk，并通过 Dense Vector 与内置 BM25 各召回一组候选，使用 RRF 融合后交给 reranker。硬相似度阈值默认关闭，避免在 rerank 前误删低 dense 分但关键词准确的结果。完成重排后，系统依据 `parent_section_id` 去 PostgreSQL 扩展父块，并受总 token 数和父块数量双重预算约束；旧索引数据则使用相邻 retrieval chunk 兼容扩展。
+Milvus 只索引 retrieval chunk，并通过 Dense Vector 与内置 BM25 各召回一组候选，使用 RRF 融合后交给 reranker。硬相似度阈值默认关闭，避免在 rerank 前误删低 dense 分但关键词准确的结果。完成重排后，系统依据 `parent_section_id` 去 PostgreSQL 扩展父块，并受总 token 数和父块数量双重预算约束；旧索引数据则使用相邻 retrieval chunk 兼容扩展。文档处于 `reindexing` 时仍使用 PostgreSQL 中已经发布的旧 `index_version` 提供检索，只有新版本和元数据在同一事务中发布后才切换。
 
 生成状态区分 `context_sources` 与 `citations`：前者记录实际送入模型的上下文来源，后者只包含答案文本中明确出现的 `[来源:文件名#chunk-N]`。这避免把“模型看过的资料”误报成“答案实际引用的资料”，也使引用精度评测具有明确语义。
 

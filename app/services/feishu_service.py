@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.models import Document, IngestionJob
 from app.db.session import AsyncSessionFactory
+from app.services.job_control_service import active_document_job
 from app.services.knowledge_base_service import knowledge_base_service
 from app.services.redis_service import redis_service
 
@@ -327,6 +328,7 @@ async def prepare_feishu_sync() -> tuple[
         "remote": len(remote_documents),
         "enqueued": 0,
         "unchanged": 0,
+        "busy": 0,
         "deleted": 0,
         "unsupported": unsupported,
     }
@@ -338,13 +340,16 @@ async def prepare_feishu_sync() -> tuple[
                     Document.knowledge_base_id == knowledge_base.id,
                     Document.source_type == "feishu",
                     Document.source_key == item.source_key,
-                )
+                ).with_for_update()
             )
             if document is not None and document.checksum == checksum:
                 document.name = item.title
                 document.source_updated_at = item.updated_at
                 document.extra_metadata = item.metadata
                 stats["unchanged"] = int(stats["unchanged"]) + 1
+                continue
+            if document is not None and await active_document_job(db, document.id) is not None:
+                stats["busy"] = int(stats["busy"]) + 1
                 continue
 
             filename = f"{item.metadata['node_token']}.txt"
@@ -371,7 +376,7 @@ async def prepare_feishu_sync() -> tuple[
                     content_type="text/plain",
                     checksum=checksum,
                     size_bytes=len(item.content.encode()),
-                    status="pending",
+                    status="queued",
                     extra_metadata=item.metadata,
                 )
                 db.add(document)
@@ -382,7 +387,7 @@ async def prepare_feishu_sync() -> tuple[
                 document.source_updated_at = item.updated_at
                 document.checksum = checksum
                 document.size_bytes = len(item.content.encode())
-                document.status = "pending"
+                document.status = "reindexing" if document.index_version else "queued"
                 document.error_message = None
                 document.extra_metadata = item.metadata
 
@@ -406,10 +411,13 @@ async def prepare_feishu_sync() -> tuple[
                 Document.knowledge_base_id == knowledge_base.id,
                 Document.source_type == "feishu",
                 Document.source_key.like(f"{settings.feishu_space_id}:%"),
-            )
+            ).with_for_update()
         )
         for document in existing_result.scalars():
             if document.source_key in remote_keys or document.status == "deleting":
+                continue
+            if await active_document_job(db, document.id) is not None:
+                stats["busy"] = int(stats["busy"]) + 1
                 continue
             document.status = "deleting"
             task_id = str(uuid4())

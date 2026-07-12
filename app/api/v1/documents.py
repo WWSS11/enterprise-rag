@@ -20,6 +20,7 @@ from app.schemas.document import (
     LocalScanRequest,
 )
 from app.services.audit_service import record_audit
+from app.services.job_control_service import active_document_job
 from app.services.knowledge_base_service import knowledge_base_service
 from app.services.source_path_service import portable_source_uri, resolve_source_uri
 from app.workers.tasks import (
@@ -137,7 +138,7 @@ async def upload_document(
         content_type=file.content_type,
         checksum=checksum,
         size_bytes=len(content),
-        status="pending",
+        status="queued",
     )
     db.add(document)
     await db.flush()
@@ -220,7 +221,9 @@ async def reindex_document(
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
     tenant_id, user_id = identity
-    document = await db.get(Document, document_id)
+    document = await db.scalar(
+        select(Document).where(Document.id == document_id).with_for_update()
+    )
     if document is None or document.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="document not found")
     try:
@@ -238,8 +241,12 @@ async def reindex_document(
     source_path = resolve_source_uri(document.source_uri)
     if not await asyncio.to_thread(source_path.is_file):
         raise HTTPException(status_code=409, detail="document source file is unavailable")
-    if document.status in {"processing", "deleting"}:
-        raise HTTPException(status_code=409, detail=f"document is currently {document.status}")
+    active_job = await active_document_job(db, document.id)
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"document already has active job: {active_job.id}",
+        )
 
     task_id = str(uuid4())
     job = IngestionJob(
@@ -249,6 +256,7 @@ async def reindex_document(
         job_type="document_reindex",
         status="queued",
     )
+    document.status = "reindexing" if document.index_version else "queued"
     db.add(job)
     await db.flush()
     record_audit(
@@ -276,7 +284,9 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
     tenant_id, user_id = identity
-    document = await db.get(Document, document_id)
+    document = await db.scalar(
+        select(Document).where(Document.id == document_id).with_for_update()
+    )
     if document is None or document.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="document not found")
     try:
@@ -289,6 +299,12 @@ async def delete_document(
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    active_job = await active_document_job(db, document.id)
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"document already has active job: {active_job.id}",
+        )
     document.status = "deleting"
     task_id = str(uuid4())
     job = IngestionJob(

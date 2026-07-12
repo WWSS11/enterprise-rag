@@ -1,6 +1,7 @@
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import request_identity
@@ -9,6 +10,7 @@ from app.db.models import IngestionJob
 from app.db.session import get_db
 from app.schemas.document import JobRead
 from app.services.audit_service import record_audit
+from app.services.job_control_service import active_rebuild_job
 from app.workers.tasks import rebuild_index_task
 
 router = APIRouter()
@@ -22,6 +24,12 @@ async def rebuild_index(
     tenant_id, user_id = identity
     if user_id not in get_settings().admin_user_ids:
         raise HTTPException(status_code=403, detail="index rebuild requires an administrator")
+    active_job = await active_rebuild_job(db)
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"index rebuild already queued or running: {active_job.id}",
+        )
     task_id = str(uuid4())
     job = IngestionJob(
         tenant_id=tenant_id,
@@ -30,7 +38,13 @@ async def rebuild_index(
         status="queued",
     )
     db.add(job)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="index rebuild already queued or running"
+        ) from exc
     record_audit(
         db,
         tenant_id=tenant_id,

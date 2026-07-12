@@ -25,31 +25,8 @@ def delete_document_task(document_id: str, job_id: str) -> dict[str, object]:
 
 @celery_app.task(name="app.tasks.rebuild_index")
 def rebuild_index_task(job_id: str | None = None) -> dict[str, object]:
-    from app.services.ingestion_service import _set_job_state
-
     parsed_job_id = UUID(job_id) if job_id else None
-    if parsed_job_id:
-        run_async(_set_job_state(parsed_job_id, status="running", progress=5))
-    try:
-        result = run_async(rebuild_vector_index())
-        if parsed_job_id:
-            run_async(
-                _set_job_state(
-                    parsed_job_id, status="succeeded", progress=100, result=result
-                )
-            )
-        return result
-    except Exception as exc:
-        if parsed_job_id:
-            run_async(
-                _set_job_state(
-                    parsed_job_id,
-                    status="failed",
-                    progress=100,
-                    error_message=str(exc)[:4_000],
-                )
-            )
-        raise
+    return run_async(rebuild_vector_index(parsed_job_id))
 
 
 @celery_app.task(name="app.tasks.scan_local_documents")

@@ -133,7 +133,8 @@ async def retrieve(state: RagState) -> RagState:
                     Document.id.in_(document_ids),
                     Document.tenant_id == state["tenant_id"],
                     Document.knowledge_base_id == UUID(state["knowledge_base_id"]),
-                    Document.status == "ready",
+                    Document.index_version.is_not(None),
+                    Document.status.in_(("ready", "reindexing")),
                 )
             )
             active_versions = {

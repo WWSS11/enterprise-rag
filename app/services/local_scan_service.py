@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.models import Document, IngestionJob
 from app.db.session import AsyncSessionFactory
+from app.services.job_control_service import active_document_job
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +41,13 @@ async def discover_local_documents(
         )
     )
     dispatches: list[ScanDispatch] = []
-    stats = {"discovered": len(files), "enqueued": 0, "unchanged": 0, "too_large": 0}
+    stats = {
+        "discovered": len(files),
+        "enqueued": 0,
+        "unchanged": 0,
+        "busy": 0,
+        "too_large": 0,
+    }
     max_bytes = settings.max_upload_mb * 1024 * 1024
 
     async with AsyncSessionFactory() as db:
@@ -57,10 +64,13 @@ async def discover_local_documents(
                     Document.knowledge_base_id == knowledge_base_id,
                     Document.source_type == "local_scan",
                     Document.source_key == source_key,
-                )
+                ).with_for_update()
             )
             if document is not None and document.checksum == checksum:
                 stats["unchanged"] += 1
+                continue
+            if document is not None and await active_document_job(db, document.id) is not None:
+                stats["busy"] += 1
                 continue
             duplicate_query = select(Document).where(
                 Document.knowledge_base_id == knowledge_base_id,
@@ -84,7 +94,7 @@ async def discover_local_documents(
                     content_type=None,
                     checksum=checksum,
                     size_bytes=size,
-                    status="pending",
+                    status="queued",
                 )
                 db.add(document)
                 await db.flush()
@@ -93,7 +103,7 @@ async def discover_local_documents(
                 document.source_uri = str(path)
                 document.checksum = checksum
                 document.size_bytes = size
-                document.status = "pending"
+                document.status = "reindexing" if document.index_version else "queued"
                 document.error_message = None
 
             task_id = str(uuid4())

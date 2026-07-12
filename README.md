@@ -12,6 +12,7 @@
 - 蓝绿向量索引重建：构建新物理集合、写入完成后原子切换 Milvus alias，并保留有限回滚版本。
 - Redis 原子令牌桶，同时限制用户/租户分钟速率和每日配额；Redis 故障默认拒绝高成本聊天请求。
 - Celery 异步解析、embedding、删除、受控目录扫描、索引重建和飞书同步；每个 Worker 子进程复用持久异步事件循环。
+- PostgreSQL 部分唯一索引保证同一文档和全量重建只能存在一个活动任务；Worker 使用 advisory lock 协调文档任务与全量索引切换，Celery 重投复用同一目标索引版本。
 - 内置 RAG 自动评测：评测数据集、标准问答、异步批量运行、配置快照和逐用例报告；确定性计算 Recall@K、MRR、引用、关键点、拒答与延迟指标。
 - 文档解析支持 TXT、Markdown、CSV、JSON、XML、PDF、DOCX（含表格）、PPTX、XLSX/XLSM、旧版 XLS、HTML。
 - 结构优先、上下文感知的多粒度分块：保留 Markdown/HTML/DOCX 标题层级和页码/幻灯片/工作表元数据；语义边界可配置，embedding 文本自动补充文档与章节上下文。
@@ -203,6 +204,6 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：32 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、四轮 25 条真实 RAG 基线评测和一次引用 ground-truth 审计已做端到端验证。
+当前验证结果：38 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、四轮 25 条真实 RAG 基线评测和一次引用 ground-truth 审计已做端到端验证。
 
 模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

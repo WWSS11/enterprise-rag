@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -234,7 +235,25 @@ class ChatMessage(UUIDPrimaryKeyMixin, Base):
 
 class IngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "ingestion_jobs"
-    __table_args__ = (Index("ix_ingestion_jobs_tenant_status", "tenant_id", "status"),)
+    __table_args__ = (
+        Index("ix_ingestion_jobs_tenant_status", "tenant_id", "status"),
+        Index(
+            "uq_ingestion_jobs_active_document",
+            "document_id",
+            unique=True,
+            postgresql_where=text(
+                "document_id IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+        ),
+        Index(
+            "uq_ingestion_jobs_active_rebuild",
+            "job_type",
+            unique=True,
+            postgresql_where=text(
+                "job_type = 'vector_index_rebuild' AND status IN ('queued', 'running')"
+            ),
+        ),
+    )
 
     tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False)
     document_id: Mapped[UUID | None] = mapped_column(
