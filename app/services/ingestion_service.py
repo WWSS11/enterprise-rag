@@ -6,12 +6,23 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import structlog
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import delete, select
 
 from app.core.config import get_settings
-from app.db.models import Document, DocumentChunk, IngestionJob
+from app.db.models import (
+    Document,
+    DocumentAtomicUnit,
+    DocumentChunk,
+    DocumentSection,
+    IngestionJob,
+)
 from app.db.session import AsyncSessionFactory
+from app.services.chunking_service import (
+    ChunkHierarchy,
+    RetrievalDraft,
+    build_chunk_hierarchy,
+    build_chunk_hierarchy_async,
+)
 from app.services.document_parser import ParsedSection, parse_document_sections
 from app.services.milvus_service import milvus_service
 from app.services.model_provider import get_embedding_model
@@ -24,6 +35,11 @@ class ChunkDraft:
     chunk_index: int
     content: str
     metadata: dict[str, Any]
+    embedding_content: str | None = None
+    parent_section_index: int | None = None
+    heading_path: tuple[str, ...] = ()
+    atomic_start_index: int | None = None
+    atomic_end_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,39 +68,24 @@ async def _set_job_state(
         await db.commit()
 
 
-def _section_label(metadata: dict[str, Any]) -> str:
-    if "page" in metadata:
-        return f"页码:{metadata['page']}"
-    if "slide" in metadata:
-        return f"幻灯片:{metadata['slide']}"
-    if "sheet" in metadata:
-        return f"工作表:{metadata['sheet']}"
-    return ""
-
-
 def build_chunk_drafts(document_name: str, sections: list[ParsedSection]) -> list[ChunkDraft]:
-    settings = get_settings()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-        separators=["\n\n", "\n", "。", "！", "？", ". ", " ", ""],
+    """Compatibility projection of the V2 retrieval layer for tests and callers."""
+
+    hierarchy = build_chunk_hierarchy(document_name, sections)
+    return [_chunk_draft(item) for item in hierarchy.retrievals]
+
+
+def _chunk_draft(item: RetrievalDraft) -> ChunkDraft:
+    return ChunkDraft(
+        chunk_index=item.chunk_index,
+        content=item.content,
+        embedding_content=item.embedding_content,
+        parent_section_index=item.parent_section_index,
+        heading_path=item.heading_path,
+        atomic_start_index=item.atomic_start_index,
+        atomic_end_index=item.atomic_end_index,
+        metadata=item.metadata,
     )
-    drafts: list[ChunkDraft] = []
-    for section in sections:
-        label = _section_label(section.metadata)
-        prefix = f"[来源:{document_name}]" + (f" [{label}]" if label else "")
-        for content in splitter.split_text(section.text):
-            content = content.strip()
-            if not content:
-                continue
-            drafts.append(
-                ChunkDraft(
-                    chunk_index=len(drafts),
-                    content=f"{prefix}\n{content}",
-                    metadata=dict(section.metadata),
-                )
-            )
-    return drafts
 
 
 async def embed_chunk_drafts(drafts: list[ChunkDraft]) -> list[EmbeddedChunk]:
@@ -95,7 +96,7 @@ async def embed_chunk_drafts(drafts: list[ChunkDraft]) -> list[EmbeddedChunk]:
 
     for offset in range(0, len(drafts), settings.embedding_batch_size):
         batch = drafts[offset : offset + settings.embedding_batch_size]
-        texts = [draft.content for draft in batch]
+        texts = [draft.embedding_content or draft.content for draft in batch]
         try:
             vectors = await model.aembed_documents(texts)
             if len(vectors) != len(batch):
@@ -115,7 +116,7 @@ async def embed_chunk_drafts(drafts: list[ChunkDraft]) -> list[EmbeddedChunk]:
 
         for draft in batch:
             try:
-                vectors = await model.aembed_documents([draft.content])
+                vectors = await model.aembed_documents([draft.embedding_content or draft.content])
                 if len(vectors) != 1:
                     raise ValueError("embedding provider returned an unexpected vector count")
                 vector = vectors[0]
@@ -133,14 +134,65 @@ async def embed_chunk_drafts(drafts: list[ChunkDraft]) -> list[EmbeddedChunk]:
 
 def _vector_rows(
     document: Document,
+    hierarchy: ChunkHierarchy,
     embedded: list[EmbeddedChunk],
     index_version: str,
-) -> tuple[list[dict[str, object]], list[DocumentChunk]]:
+) -> tuple[
+    list[dict[str, object]],
+    list[DocumentSection],
+    list[DocumentAtomicUnit],
+    list[DocumentChunk],
+]:
     rows: list[dict[str, object]] = []
+    section_models: list[DocumentSection] = []
+    atomic_models: list[DocumentAtomicUnit] = []
     models: list[DocumentChunk] = []
+    section_ids: dict[int, UUID] = {}
+    atomic_to_section: dict[int, int] = {}
+    for parent in hierarchy.parents:
+        section_id = uuid4()
+        section_ids[parent.section_index] = section_id
+        for atomic_index in range(parent.atomic_start_index, parent.atomic_end_index + 1):
+            atomic_to_section[atomic_index] = parent.section_index
+        section_models.append(
+            DocumentSection(
+                id=section_id,
+                tenant_id=document.tenant_id,
+                knowledge_base_id=document.knowledge_base_id,
+                document_id=document.id,
+                index_version=index_version,
+                section_index=parent.section_index,
+                title=parent.title,
+                heading_path=list(parent.heading_path),
+                content=parent.content,
+                token_count=parent.token_count,
+                source_metadata=parent.metadata,
+            )
+        )
+    for atomic in hierarchy.atomics:
+        parent_index = atomic_to_section[atomic.atomic_index]
+        atomic_models.append(
+            DocumentAtomicUnit(
+                id=uuid4(),
+                tenant_id=document.tenant_id,
+                knowledge_base_id=document.knowledge_base_id,
+                document_id=document.id,
+                section_id=section_ids[parent_index],
+                index_version=index_version,
+                atomic_index=atomic.atomic_index,
+                content=atomic.content,
+                token_count=atomic.token_count,
+                source_metadata=atomic.metadata,
+            )
+        )
     for item in embedded:
         chunk_id = uuid4()
         vector_id = str(chunk_id)
+        chunk_parent_index = item.draft.parent_section_index
+        parent_section_id = (
+            section_ids[chunk_parent_index] if chunk_parent_index is not None else None
+        )
+        embedding_content = item.draft.embedding_content or item.draft.content
         metadata = {
             **item.draft.metadata,
             "document_id": str(document.id),
@@ -154,10 +206,15 @@ def _vector_rows(
                 tenant_id=document.tenant_id,
                 knowledge_base_id=document.knowledge_base_id,
                 document_id=document.id,
+                parent_section_id=parent_section_id,
                 vector_id=vector_id,
                 index_version=index_version,
                 chunk_index=item.draft.chunk_index,
                 content=item.draft.content,
+                embedding_content=embedding_content,
+                heading_path=list(item.draft.heading_path),
+                atomic_start_index=item.draft.atomic_start_index,
+                atomic_end_index=item.draft.atomic_end_index,
                 token_count=max(1, len(item.draft.content) // 2),
                 source_metadata=metadata,
             )
@@ -165,18 +222,23 @@ def _vector_rows(
         rows.append(
             {
                 "id": vector_id,
-                "vector": item.vector,
+                "dense_vector": item.vector,
                 "tenant_id": document.tenant_id,
                 "knowledge_base_id": str(document.knowledge_base_id),
                 "document_id": str(document.id),
                 "document_name": document.name,
                 "chunk_id": str(chunk_id),
                 "chunk_index": item.draft.chunk_index,
+                "parent_section_id": str(parent_section_id or ""),
+                "heading_path": " > ".join(item.draft.heading_path),
+                "atomic_start_index": item.draft.atomic_start_index or 0,
+                "atomic_end_index": item.draft.atomic_end_index or 0,
                 "index_version": index_version,
                 "content": item.draft.content,
+                "embedding_content": embedding_content,
             }
         )
-    return rows, models
+    return rows, section_models, atomic_models, models
 
 
 async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[str, object]:
@@ -202,11 +264,14 @@ async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[s
             document = await db.get(Document, document_id)
             if document is None:
                 raise LookupError(f"document disappeared during ingestion: {document_id}")
-            drafts = build_chunk_drafts(document.name, sections)
+            hierarchy = await build_chunk_hierarchy_async(document.name, sections)
+            drafts = [_chunk_draft(item) for item in hierarchy.retrievals]
             if not drafts:
                 raise ValueError("document contains no indexable chunks")
             embedded = await embed_chunk_drafts(drafts)
-            rows, chunk_models = _vector_rows(document, embedded, new_index_version)
+            rows, section_models, atomic_models, chunk_models = _vector_rows(
+                document, hierarchy, embedded, new_index_version
+            )
         await _set_job_state(job_id, status="running", progress=65)
 
         await milvus_service.insert(rows)
@@ -218,7 +283,13 @@ async def ingest_document(document_id: UUID, job_id: UUID, path: Path) -> dict[s
             if document is None:
                 raise LookupError(f"document disappeared during ingestion: {document_id}")
             await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
-            db.add_all(chunk_models)
+            await db.execute(
+                delete(DocumentAtomicUnit).where(DocumentAtomicUnit.document_id == document_id)
+            )
+            await db.execute(
+                delete(DocumentSection).where(DocumentSection.document_id == document_id)
+            )
+            db.add_all([*section_models, *atomic_models, *chunk_models])
             document.status = "ready"
             document.index_version = new_index_version
             document.indexed_at = datetime.now(UTC)
@@ -330,6 +401,11 @@ async def _insert_rebuild_batch(
         ChunkDraft(
             chunk_index=position,
             content=chunk.content,
+            embedding_content=chunk.embedding_content,
+            parent_section_index=None,
+            heading_path=tuple(chunk.heading_path),
+            atomic_start_index=chunk.atomic_start_index,
+            atomic_end_index=chunk.atomic_end_index,
             metadata=chunk.source_metadata,
         )
         for position, (chunk, _) in enumerate(batch)
@@ -344,15 +420,20 @@ async def _insert_rebuild_batch(
         rows.append(
             {
                 "id": chunk.vector_id,
-                "vector": vector,
+                "dense_vector": vector,
                 "tenant_id": chunk.tenant_id,
                 "knowledge_base_id": str(chunk.knowledge_base_id),
                 "document_id": str(chunk.document_id),
                 "document_name": document_name,
                 "chunk_id": str(chunk.id),
                 "chunk_index": chunk.chunk_index,
+                "parent_section_id": str(chunk.parent_section_id or ""),
+                "heading_path": " > ".join(chunk.heading_path),
+                "atomic_start_index": chunk.atomic_start_index or 0,
+                "atomic_end_index": chunk.atomic_end_index or 0,
                 "index_version": chunk.index_version,
                 "content": chunk.content,
+                "embedding_content": chunk.embedding_content,
             }
         )
     await milvus_service.insert(rows, collection_name=collection)

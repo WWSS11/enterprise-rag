@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     milvus_uri: str = "http://localhost:19530"
     milvus_token: str = ""
     milvus_db_name: str = "default"
-    milvus_collection: str = "rag_chunks_v2"
+    milvus_collection: str = "rag_chunks_v3"
     milvus_collection_alias: str = "rag_chunks_current"
     milvus_rebuild_retained_collections: int = 2
     embedding_dimension: int = 1024
@@ -53,9 +53,21 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_enabled: bool = True
 
-    retrieval_top_k: int = 20
-    rerank_top_k: int = 5
-    score_threshold: float = 0.55
+    retrieval_top_k: int = 40
+    rerank_top_k: int = 8
+    score_threshold: float = 0.0
+    hybrid_rrf_k: int = Field(default=60, ge=1, le=1_000)
+    atomic_chunk_max_tokens: int = Field(default=160, ge=32, le=512)
+    retrieval_chunk_target_tokens: int = Field(default=320, ge=64, le=1_024)
+    retrieval_chunk_overlap_tokens: int = Field(default=48, ge=0, le=256)
+    parent_chunk_max_tokens: int = Field(default=960, ge=128, le=4_096)
+    embedding_context_max_tokens: int = Field(default=400, ge=64, le=512)
+    semantic_chunking_enabled: bool = True
+    semantic_break_threshold: float = Field(default=0.58, ge=0.0, le=1.0)
+    semantic_break_percentile: int = Field(default=15, ge=1, le=50)
+    context_max_tokens: int = Field(default=4_000, ge=256, le=32_000)
+    context_max_parents: int = Field(default=5, ge=1, le=20)
+    context_neighbor_window: int = Field(default=1, ge=0, le=3)
     upload_dir: Path = Path("data/uploads")
     connector_dir: Path = Path("data/connectors")
     scan_roots: dict[str, Path] = Field(default_factory=lambda: {"default": Path("data/import")})
@@ -106,6 +118,16 @@ class Settings(BaseSettings):
     def validate_runtime_invariants(self) -> Self:
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("APP_CHUNK_OVERLAP must be smaller than APP_CHUNK_SIZE")
+        if self.retrieval_chunk_overlap_tokens >= self.retrieval_chunk_target_tokens:
+            raise ValueError(
+                "APP_RETRIEVAL_CHUNK_OVERLAP_TOKENS must be smaller than "
+                "APP_RETRIEVAL_CHUNK_TARGET_TOKENS"
+            )
+        if self.retrieval_chunk_target_tokens > self.parent_chunk_max_tokens:
+            raise ValueError(
+                "APP_RETRIEVAL_CHUNK_TARGET_TOKENS must not exceed "
+                "APP_PARENT_CHUNK_MAX_TOKENS"
+            )
         if self.env.lower() in {"prod", "production"} and not self.identity_header_secret:
             raise ValueError("APP_IDENTITY_HEADER_SECRET is required in production")
         return self

@@ -1,4 +1,4 @@
-from app.services.document_parser import parse_document
+from app.services.document_parser import parse_document, parse_document_sections
 
 
 def test_parse_text_document(tmp_path) -> None:
@@ -29,3 +29,19 @@ def test_parse_powerpoint_document(tmp_path) -> None:
     content = parse_document(path)
     assert "企业 RAG" in content
     assert "异步入库与权限过滤" in content
+
+
+def test_parse_markdown_preserves_heading_hierarchy(tmp_path) -> None:
+    path = tmp_path / "architecture.md"
+    path.write_text(
+        "# 企业知识库\n\n总体说明。\n\n## 检索层\n\n混合召回与重排。",
+        encoding="utf-8",
+    )
+
+    sections = parse_document_sections(path)
+
+    assert [section.heading_path for section in sections] == [
+        ("企业知识库",),
+        ("企业知识库", "检索层"),
+    ]
+    assert sections[1].title == "检索层"

@@ -9,9 +9,10 @@ from langgraph.types import StreamWriter
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.db.models import Document
+from app.db.models import Document, DocumentChunk, DocumentSection
 from app.db.session import AsyncSessionFactory
 from app.rag.state import RagState
+from app.services.chunking_service import estimate_tokens, truncate_to_tokens
 from app.services.milvus_service import milvus_service
 from app.services.model_provider import get_chat_model, get_embedding_model
 from app.services.rerank_service import rerank_service
@@ -78,9 +79,11 @@ async def rewrite_query(state: RagState) -> RagState:
 async def retrieve(state: RagState) -> RagState:
     settings = get_settings()
     query = state.get("rewritten_query", state["question"])
-    vector = await get_embedding_model().aembed_query(query)
-    hits = await milvus_service.search(
+    dense_query = f"为这个句子生成表示以用于检索相关文章：{query}"
+    vector = await get_embedding_model().aembed_query(dense_query)
+    hits = await milvus_service.hybrid_search(
         vector,
+        query,
         state["tenant_id"],
         state["knowledge_base_id"],
         settings.retrieval_top_k,
@@ -125,8 +128,13 @@ async def retrieve(state: RagState) -> RagState:
                 "document_name": entity.get("document_name", "unknown"),
                 "chunk_id": entity.get("chunk_id", str(hit.get("id", ""))),
                 "chunk_index": entity.get("chunk_index", 0),
+                "parent_section_id": entity.get("parent_section_id", ""),
+                "heading_path": entity.get("heading_path", ""),
+                "atomic_start_index": entity.get("atomic_start_index", 0),
+                "atomic_end_index": entity.get("atomic_end_index", 0),
                 "index_version": entity.get("index_version", ""),
                 "content": entity.get("content", ""),
+                "embedding_content": entity.get("embedding_content", entity.get("content", "")),
                 "score": score,
             }
         )
@@ -143,8 +151,115 @@ async def rerank(state: RagState) -> RagState:
     return {"reranked": items}
 
 
+async def expand_context(state: RagState) -> RagState:
+    """Expand reranked retrieval chunks to their parent sections after ranking."""
+
+    settings = get_settings()
+    reranked = state.get("reranked", [])
+    if not reranked:
+        return {"expanded": []}
+
+    parent_ids: list[UUID] = []
+    for item in reranked:
+        try:
+            parent_ids.append(UUID(str(item.get("parent_section_id", ""))))
+        except ValueError:
+            continue
+
+    parents: dict[str, DocumentSection] = {}
+    async with AsyncSessionFactory() as db:
+        if parent_ids:
+            result = await db.execute(
+                select(DocumentSection).where(
+                    DocumentSection.id.in_(parent_ids),
+                    DocumentSection.tenant_id == state["tenant_id"],
+                    DocumentSection.knowledge_base_id == UUID(state["knowledge_base_id"]),
+                )
+            )
+            parents = {str(parent.id): parent for parent in result.scalars()}
+
+        expanded: list[dict[str, Any]] = []
+        consumed_section_ids: set[str] = set()
+        token_total = 0
+        for item in reranked:
+            parent_id = str(item.get("parent_section_id", ""))
+            parent = parents.get(parent_id)
+            if parent is not None:
+                if parent_id in consumed_section_ids:
+                    continue
+                sibling_result = await db.execute(
+                    select(DocumentSection)
+                    .where(
+                        DocumentSection.document_id == parent.document_id,
+                        DocumentSection.index_version == parent.index_version,
+                        DocumentSection.section_index.between(
+                            max(0, parent.section_index - settings.context_neighbor_window),
+                            parent.section_index + settings.context_neighbor_window,
+                        ),
+                    )
+                    .order_by(DocumentSection.section_index)
+                )
+                siblings = [
+                    section
+                    for section in sibling_result.scalars()
+                    if str(section.id) not in consumed_section_ids
+                ]
+                consumed_section_ids.update(str(section.id) for section in siblings)
+                context_content = "\n\n".join(
+                    (
+                        f"[章节:{' > '.join(section.heading_path)}]\n{section.content}"
+                        if section.heading_path
+                        else section.content
+                    )
+                    for section in siblings
+                )
+                heading_path = parent.heading_path
+            else:
+                # Backward-compatible neighbor expansion for rows created before hierarchy V2.
+                try:
+                    document_id = UUID(str(item["document_id"]))
+                except (KeyError, ValueError):
+                    document_id = None
+                context_content = item["content"]
+                heading_path = item.get("heading_path", "")
+                if document_id is not None:
+                    neighbor_result = await db.execute(
+                        select(DocumentChunk)
+                        .where(
+                            DocumentChunk.document_id == document_id,
+                            DocumentChunk.index_version == item.get("index_version"),
+                            DocumentChunk.chunk_index.between(
+                                max(0, int(item["chunk_index"]) - 1),
+                                int(item["chunk_index"]) + 1,
+                            ),
+                        )
+                        .order_by(DocumentChunk.chunk_index)
+                    )
+                    neighbors = list(neighbor_result.scalars())
+                    if neighbors:
+                        context_content = "\n\n".join(chunk.content for chunk in neighbors)
+
+            remaining = settings.context_max_tokens - token_total
+            if remaining <= 0 or len(expanded) >= settings.context_max_parents:
+                break
+            context_content = truncate_to_tokens(context_content, remaining)
+            context_tokens = estimate_tokens(context_content)
+            if not context_content:
+                continue
+            expanded.append(
+                {
+                    **item,
+                    "context_content": context_content,
+                    "context_token_count": context_tokens,
+                    "heading_path": heading_path,
+                }
+            )
+            token_total += context_tokens
+    return {"expanded": expanded}
+
+
 async def generate(state: RagState, writer: StreamWriter) -> RagState:
-    documents = state.get("reranked", [])
+    documents = state.get("expanded", state.get("reranked", []))
     citations = [
         {
             "document_id": item["document_id"],
@@ -156,7 +271,13 @@ async def generate(state: RagState, writer: StreamWriter) -> RagState:
         for item in documents
     ]
     context = "\n\n---\n\n".join(
-        f"[来源:{item['document_name']}#chunk-{item['chunk_index']}]\n{item['content']}"
+        f"[来源:{item['document_name']}#chunk-{item['chunk_index']}]\n"
+        + (
+            f"[章节:{' > '.join(item['heading_path'])}]\n"
+            if isinstance(item.get("heading_path"), list) and item["heading_path"]
+            else ""
+        )
+        + f"{item.get('context_content', item['content'])}"
         for item in documents
     )
     if not context:
@@ -199,10 +320,12 @@ def get_rag_graph():
     graph.add_node("rewrite_query", rewrite_query)
     graph.add_node("retrieve", retrieve)
     graph.add_node("rerank", rerank)
+    graph.add_node("expand_context", expand_context)
     graph.add_node("generate", generate)
     graph.add_edge(START, "rewrite_query")
     graph.add_edge("rewrite_query", "retrieve")
     graph.add_edge("retrieve", "rerank")
-    graph.add_edge("rerank", "generate")
+    graph.add_edge("rerank", "expand_context")
+    graph.add_edge("expand_context", "generate")
     graph.add_edge("generate", END)
     return graph.compile()

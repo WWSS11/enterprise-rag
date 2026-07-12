@@ -19,7 +19,9 @@ class RerankService:
         payload = {
             "model": settings.rerank_model,
             "query": query,
-            "documents": [item["content"] for item in documents],
+            "documents": [
+                item.get("embedding_content", item["content"]) for item in documents
+            ],
             "top_n": top_k,
             "return_documents": False,
         }

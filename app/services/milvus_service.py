@@ -2,7 +2,14 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-from pymilvus import DataType, MilvusClient
+from pymilvus import (
+    AnnSearchRequest,
+    DataType,
+    Function,
+    FunctionType,
+    MilvusClient,
+    RRFRanker,
+)
 from pymilvus.exceptions import MilvusException
 
 from app.core.config import get_settings
@@ -38,26 +45,54 @@ class MilvusService:
         schema = MilvusClient.create_schema(auto_id=False, enable_dynamic_field=False)
         schema.add_field(field_name="id", datatype=DataType.VARCHAR, is_primary=True, max_length=64)
         schema.add_field(
-            field_name="vector",
+            field_name="dense_vector",
             datatype=DataType.FLOAT_VECTOR,
             dim=self.settings.embedding_dimension,
         )
+        schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
         schema.add_field(field_name="tenant_id", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="knowledge_base_id", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="document_id", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="document_name", datatype=DataType.VARCHAR, max_length=512)
         schema.add_field(field_name="chunk_id", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="chunk_index", datatype=DataType.INT64)
+        schema.add_field(field_name="parent_section_id", datatype=DataType.VARCHAR, max_length=64)
+        schema.add_field(field_name="heading_path", datatype=DataType.VARCHAR, max_length=4096)
+        schema.add_field(field_name="atomic_start_index", datatype=DataType.INT64)
+        schema.add_field(field_name="atomic_end_index", datatype=DataType.INT64)
         schema.add_field(field_name="index_version", datatype=DataType.VARCHAR, max_length=64)
         schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)
+        schema.add_field(
+            field_name="embedding_content",
+            datatype=DataType.VARCHAR,
+            max_length=65535,
+            enable_analyzer=True,
+            enable_match=True,
+            analyzer_params={"tokenizer": "jieba"},
+        )
+        schema.add_function(
+            Function(
+                name="embedding_content_bm25",
+                function_type=FunctionType.BM25,
+                input_field_names=["embedding_content"],
+                output_field_names=["sparse_vector"],
+            )
+        )
 
         index_params = self.client.prepare_index_params()
         index_params.add_index(
-            field_name="vector",
-            index_name="vector_hnsw",
+            field_name="dense_vector",
+            index_name="dense_vector_hnsw",
             index_type="HNSW",
             metric_type="COSINE",
             params={"M": 32, "efConstruction": 200},
+        )
+        index_params.add_index(
+            field_name="sparse_vector",
+            index_name="sparse_vector_bm25",
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="BM25",
+            params={"inverted_index_algo": "DAAT_MAXSCORE"},
         )
         index_params.add_index(field_name="tenant_id", index_type="INVERTED")
         index_params.add_index(field_name="knowledge_base_id", index_type="INVERTED")
@@ -104,9 +139,10 @@ class MilvusService:
             data=rows,
         )
 
-    async def search(
+    async def hybrid_search(
         self,
         vector: list[float],
+        query: str,
         tenant_id: str,
         knowledge_base_id: str,
         limit: int,
@@ -114,26 +150,56 @@ class MilvusService:
         collection = await self.ensure_collection()
         safe_tenant = tenant_id.replace('"', '\\"')
         safe_kb = knowledge_base_id.replace('"', '\\"')
-        result = await asyncio.to_thread(
-            self.client.search,
-            collection_name=collection,
+        expression = f'tenant_id == "{safe_tenant}" and knowledge_base_id == "{safe_kb}"'
+        dense_request = AnnSearchRequest(
             data=[vector],
-            anns_field="vector",
-            filter=(
-                f'tenant_id == "{safe_tenant}" and knowledge_base_id == "{safe_kb}"'
-            ),
+            anns_field="dense_vector",
+            param={"metric_type": "COSINE", "params": {"ef": 128}},
+            limit=limit,
+            expr=expression,
+        )
+        sparse_request = AnnSearchRequest(
+            data=[query],
+            anns_field="sparse_vector",
+            param={"metric_type": "BM25", "params": {}},
+            limit=limit,
+            expr=expression,
+        )
+        result = await asyncio.to_thread(
+            self.client.hybrid_search,
+            collection_name=collection,
+            reqs=[dense_request, sparse_request],
+            ranker=RRFRanker(k=self.settings.hybrid_rrf_k),
             limit=limit,
             output_fields=[
                 "document_id",
                 "document_name",
                 "chunk_id",
                 "chunk_index",
+                "parent_section_id",
+                "heading_path",
+                "atomic_start_index",
+                "atomic_end_index",
                 "index_version",
                 "content",
+                "embedding_content",
             ],
-            search_params={"metric_type": "COSINE", "params": {"ef": 128}},
         )
         return list(result[0]) if result else []
+
+    async def search(
+        self,
+        vector: list[float],
+        tenant_id: str,
+        knowledge_base_id: str,
+        limit: int,
+        query: str = "",
+    ) -> list[dict[str, Any]]:
+        """Compatibility entrypoint; all new searches use dense + BM25 hybrid recall."""
+
+        return await self.hybrid_search(
+            vector, query, tenant_id, knowledge_base_id, limit
+        )
 
     async def delete_document(
         self, document_id: str, keep_index_version: str | None = None

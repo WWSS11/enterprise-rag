@@ -5,14 +5,15 @@
 ## 已实现能力
 
 - FastAPI REST、真实 token 级 SSE、OpenAPI、RFC Problem Details、请求 ID 和 Prometheus 指标。
-- LangGraph 显式 `rewrite_query → retrieve → rerank → generate` 工作流；只有短问题或指代问题才调用模型改写。
-- PostgreSQL 知识库、成员权限、文档、分块、会话、消息、任务和审计模型，全部由 Alembic 管理。
-- Milvus 按租户和知识库双重过滤；文档索引带版本号，PostgreSQL 会过滤失效向量版本。
+- LangGraph 显式 `rewrite_query → hybrid_retrieve → rerank → expand_context → generate` 工作流；先重排小块，再扩展父级上下文。
+- PostgreSQL 保存文档 section、atomic、retrieval、parent 层级关系以及权限、会话、任务和审计事实，全部由 Alembic 管理。
+- Milvus 使用 Dense Vector + 内置 BM25 双路召回和 RRF 融合，并按租户、知识库过滤；PostgreSQL 会过滤失效向量版本。
 - 蓝绿向量索引重建：构建新物理集合、写入完成后原子切换 Milvus alias，并保留有限回滚版本。
 - Redis 原子令牌桶，同时限制用户/租户分钟速率和每日配额；Redis 故障默认拒绝高成本聊天请求。
 - Celery 异步解析、embedding、删除、受控目录扫描、索引重建和飞书同步；每个 Worker 子进程复用持久异步事件循环。
 - 内置 RAG 自动评测：评测数据集、标准问答、异步批量运行、配置快照和逐用例报告；确定性计算 Recall@K、MRR、引用、关键点、拒答与延迟指标。
 - 文档解析支持 TXT、Markdown、CSV、JSON、XML、PDF、DOCX（含表格）、PPTX、XLSX/XLSM、旧版 XLS、HTML。
+- 结构优先、上下文感知的多粒度分块：保留 Markdown/HTML/DOCX 标题层级和页码/幻灯片/工作表元数据；语义边界可配置，embedding 文本自动补充文档与章节上下文。
 - 批量 embedding 失败后逐条重试；默认任一分块失败就保留旧索引并标记任务失败，可显式开启部分入库。
 - 飞书 Wiki 增量同步支持新版文档、电子表格和多维表格；基于远端更新时间/内容校验跳过未变化内容，并清理远端已删除文档。
 
@@ -26,7 +27,7 @@ flowchart LR
     API --> PG["PostgreSQL metadata + ACL + audit"]
     API --> Redis["Redis session + quota"]
     API --> Graph["LangGraph RAG"]
-    Graph --> Milvus["Milvus vector search"]
+    Graph --> Milvus["Milvus Dense + BM25 + RRF"]
     Graph --> Models["Embedding / Rerank / Chat APIs"]
     API --> Celery["Celery queue"]
     Beat["Celery Beat"] --> Celery
@@ -63,13 +64,36 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 
 脚本只创建本目录下的 `.venv`。依赖、测试工具和命令均从该虚拟环境运行。
 
-## 启动完整环境
+## 本地开发启动
 
 ```powershell
 Copy-Item .\infra\.env.example .\infra\.env
-# 修改数据库、Redis、MinIO 密码；需要入库/问答时填写模型 API key
+# 确保根目录 .env 与 infra/.env 的 PostgreSQL、Redis 密码一致
 powershell -ExecutionPolicy Bypass -File .\scripts\up.ps1
 ```
+
+`up.ps1` 只启动 PostgreSQL、Redis、etcd、MinIO 和 Milvus，不构建 Python 应用镜像。FastAPI、Celery Worker 和 Beat 都从项目内 `.venv` 运行，代码修改无需重建 Docker 镜像。
+
+分别打开终端运行：
+
+```powershell
+# 终端 1：自动执行 Alembic，然后启动热重载 API
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-api.ps1
+
+# 终端 2：Windows 本地开发使用稳定的 solo pool
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-worker.ps1
+
+# 终端 3：只有验证定时任务时才需要
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-beat.ps1
+```
+
+开发环境检查：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-check.ps1
+```
+
+`infra/compose.yml` 仍保留完整容器化部署定义，集成测试或部署时可以显式运行完整 Compose；日常开发不使用其中的 `api`、`worker`、`beat`、`migrate` 服务。
 
 服务入口：
 
@@ -81,7 +105,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\up.ps1
 - MinIO Console：http://127.0.0.1:9001
 - Redis 宿主机端口：`127.0.0.1:16379`
 
-停止：
+停止中间件：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
@@ -96,7 +120,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 - `APP_ADMIN_USER_IDS`：允许触发全量索引重建的用户 ID 集合。
 - `APP_SCAN_ROOTS`：可扫描目录别名映射；接口不能提交任意磁盘路径。
 - `APP_ALLOW_PARTIAL_INGESTION=false`：默认不接受缺失分块的部分索引。
-- `APP_CHUNK_SIZE=480`、`APP_CHUNK_OVERLAP=80`：为 512-token 级 embedding 模型保留来源前缀和中英文混排余量。
+- `APP_ATOMIC_CHUNK_MAX_TOKENS=160`：句子、段落、表格行等最小语义单元上限。
+- `APP_RETRIEVAL_CHUNK_TARGET_TOKENS=320`、`APP_RETRIEVAL_CHUNK_OVERLAP_TOKENS=48`：实际写入 Milvus 并参与召回的子块。
+- `APP_PARENT_CHUNK_MAX_TOKENS=960`：rerank 后用于生成阶段扩展的父级块。
+- `APP_EMBEDDING_CONTEXT_MAX_TOKENS=400`：包含文档名、章节路径和位置元数据的 embedding 输入预算，适配当前 512-token 级 BGE 模型。
+- `APP_SEMANTIC_CHUNKING_ENABLED=true`、`APP_SEMANTIC_BREAK_PERCENTILE=15`：只把相邻 atomic 中差异最大的少量位置作为语义断点，避免过度切碎。
+- `APP_CONTEXT_NEIGHBOR_WINDOW=1`：rerank 后扩展命中父节及前后相邻章节，再受总 token 预算限制。
 - `APP_FEISHU_*`：飞书应用、空间、租户和目标知识库配置。
 
 请求身份边界当前为 `X-Tenant-Id`、`X-User-Id` 和可选的 `X-Identity-Secret`。生产环境应由 OIDC/JWT 网关完成认证，后端只信任受保护的内部网络身份头。
@@ -110,6 +139,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 | `POST` | `/api/v1/documents` | 上传并创建异步入库任务 |
 | `POST` | `/api/v1/documents/scan` | 扫描配置好的目录别名 |
 | `GET` | `/api/v1/documents` | 只返回有权访问的知识库文档 |
+| `POST` | `/api/v1/documents/{id}/reindex` | 保留文档 ID，按当前分块/索引策略重新入库 |
 | `DELETE` | `/api/v1/documents/{id}` | 异步删除文档和向量 |
 | `POST` | `/api/v1/chat` | 非流式 LangGraph RAG |
 | `POST` | `/api/v1/chat/stream` | SSE：`metadata`、`stage`、`token`、`done/error` |
@@ -157,6 +187,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：17 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过；API、PostgreSQL、Redis、Milvus、Worker、Beat 均已在 Docker 中运行。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和 25 条真实 RAG 基线评测已做端到端验证。
+当前验证结果：19 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除和 25 条真实 RAG 基线评测已做端到端验证。
 
-模型密钥不属于仓库，因此真实 embedding/LLM 内容质量测试需要在 `infra/.env` 填入密钥后执行。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。
+模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

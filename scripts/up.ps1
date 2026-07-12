@@ -10,4 +10,9 @@ docker compose `
   --env-file (Join-Path $ProjectRoot "infra\versions.env") `
   --env-file $InfraEnv `
   -f (Join-Path $ProjectRoot "infra\compose.yml") `
-  up -d --build
+  up -d postgres redis etcd minio milvus
+
+Write-Host "Middleware is ready. Application services run from .venv during development."
+Write-Host "API:    powershell -ExecutionPolicy Bypass -File .\scripts\dev-api.ps1"
+Write-Host "Worker: powershell -ExecutionPolicy Bypass -File .\scripts\dev-worker.ps1"
+Write-Host "Beat:   powershell -ExecutionPolicy Bypass -File .\scripts\dev-beat.ps1"

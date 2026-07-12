@@ -210,6 +210,64 @@ async def list_documents(
     return list(result.scalars())
 
 
+@router.post(
+    "/{document_id}/reindex", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED
+)
+async def reindex_document(
+    document_id: UUID,
+    identity: tuple[str, str] = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> IngestionJob:
+    tenant_id, user_id = identity
+    document = await db.get(Document, document_id)
+    if document is None or document.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="document not found")
+    try:
+        await knowledge_base_service.authorize(
+            db,
+            tenant_id,
+            user_id,
+            document.knowledge_base_id,
+            required_permission="editor",
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if not document.source_uri:
+        raise HTTPException(status_code=409, detail="document has no reusable source file")
+    source_path = Path(document.source_uri)
+    if not await asyncio.to_thread(source_path.is_file):
+        raise HTTPException(status_code=409, detail="document source file is unavailable")
+    if document.status in {"processing", "deleting"}:
+        raise HTTPException(status_code=409, detail=f"document is currently {document.status}")
+
+    task_id = str(uuid4())
+    job = IngestionJob(
+        tenant_id=tenant_id,
+        document_id=document.id,
+        task_id=task_id,
+        job_type="document_reindex",
+        status="queued",
+    )
+    db.add(job)
+    await db.flush()
+    record_audit(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        action="documents.reindex_requested",
+        resource_type="document",
+        resource_id=str(document.id),
+        details={"knowledge_base_id": str(document.knowledge_base_id), "job_id": str(job.id)},
+    )
+    await db.commit()
+    await db.refresh(job)
+    resolved_source_path = await asyncio.to_thread(source_path.resolve)
+    ingest_document_task.apply_async(
+        args=[str(document.id), str(job.id), str(resolved_source_path)], task_id=task_id
+    )
+    return job
+
+
 @router.delete("/{document_id}", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
 async def delete_document(
     document_id: UUID,

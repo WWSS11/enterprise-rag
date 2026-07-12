@@ -8,6 +8,8 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+.celerybeat-schedule
+celerybeat-schedule*
 .mypy_cache/
 .ruff_cache/
 htmlcov/

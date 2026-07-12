@@ -100,6 +100,66 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     chunks: Mapped[list[DocumentChunk]] = relationship(
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True
     )
+    sections: Mapped[list[DocumentSection]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class DocumentSection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "document_sections"
+    __table_args__ = (
+        UniqueConstraint("document_id", "section_index", name="uq_sections_document_index"),
+        Index("ix_sections_document_version", "document_id", "index_version"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="RESTRICT"), nullable=False
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    index_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    section_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(1024))
+    heading_path: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    document: Mapped[Document] = relationship(back_populates="sections")
+    atomic_units: Mapped[list[DocumentAtomicUnit]] = relationship(
+        back_populates="section", cascade="all, delete-orphan", passive_deletes=True
+    )
+    retrieval_chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="parent_section", passive_deletes=True
+    )
+
+
+class DocumentAtomicUnit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "document_atomic_units"
+    __table_args__ = (
+        UniqueConstraint("document_id", "atomic_index", name="uq_atomic_document_index"),
+        Index("ix_atomic_section_index", "section_id", "atomic_index"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="RESTRICT"), nullable=False
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    section_id: Mapped[UUID] = mapped_column(
+        ForeignKey("document_sections.id", ondelete="CASCADE"), nullable=False
+    )
+    index_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    atomic_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+    section: Mapped[DocumentSection] = relationship(back_populates="atomic_units")
 
 
 class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -117,14 +177,24 @@ class DocumentChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_id: Mapped[UUID] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
+    parent_section_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("document_sections.id", ondelete="CASCADE")
+    )
     vector_id: Mapped[str] = mapped_column(String(64), nullable=False)
     index_version: Mapped[str] = mapped_column(String(64), nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_content: Mapped[str] = mapped_column(Text, nullable=False)
+    heading_path: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    atomic_start_index: Mapped[int | None] = mapped_column(Integer)
+    atomic_end_index: Mapped[int | None] = mapped_column(Integer)
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+    parent_section: Mapped[DocumentSection | None] = relationship(
+        back_populates="retrieval_chunks"
+    )
 
 
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):

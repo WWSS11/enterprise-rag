@@ -10,5 +10,6 @@ class RagState(TypedDict, total=False):
     rewritten_query: str
     retrieved: list[dict[str, Any]]
     reranked: list[dict[str, Any]]
+    expanded: list[dict[str, Any]]
     answer: str
     citations: list[dict[str, Any]]
