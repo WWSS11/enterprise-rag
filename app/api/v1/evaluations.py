@@ -110,6 +110,7 @@ def _case_from_payload(dataset_id: UUID, payload: EvaluationCaseCreate) -> Evalu
             str(item) for item in payload.acceptable_citation_document_ids
         ],
         required_key_points=payload.required_key_points,
+        required_key_point_groups=payload.required_key_point_groups,
         should_refuse=payload.should_refuse,
         tags=payload.tags,
     )
@@ -400,6 +401,7 @@ async def get_report(
                     case.acceptable_citation_document_ids
                 ),
                 "required_key_points": case.required_key_points,
+                "required_key_point_groups": case.required_key_point_groups,
                 "should_refuse": case.should_refuse,
                 "tags": case.tags,
             }

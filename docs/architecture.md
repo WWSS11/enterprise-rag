@@ -80,8 +80,8 @@ Celery prefork 子进程不会为每个任务反复创建事件循环。`app/wor
 
 ## 自动评测闭环
 
-评测数据集绑定单一知识库，标准用例保存预期文档、关键点和拒答标签。API 创建运行时冻结当前模型、TopK、阈值、分块参数和 Milvus alias，Celery Worker 随后复用同一 LangGraph 工作流逐条执行，但不创建 Conversation、ChatMessage 或普通聊天审计记录。
+评测数据集绑定单一知识库，标准用例保存预期文档、严格关键点、关键点同义组和拒答标签。API 创建运行时冻结当前模型、TopK、阈值、分块参数和 Milvus alias，Celery Worker 随后复用同一 LangGraph 工作流逐条执行，但不创建 Conversation、ChatMessage 或普通聊天审计记录。
 
-每条结果保留原始检索顺序、rerank 顺序、引用、答案和延迟，再计算 Recall@K、MRR、引用 precision/recall、关键点覆盖率和拒答准确率。拒答检测只检查答案第一结论句，并移除其中的引号内容和 inline code，避免“讨论无法回答这一标记”的元问题被误判成模型拒答。运行可按已经存在的 `run_id + case_id` 结果续跑，避免 Worker 中断后重复消耗全部模型额度。PostgreSQL 保存评测事实，报告 API 只聚合已持久化结果，因此后续增加可选 LLM-as-Judge 或不同检索策略时不需要重做数据模型。
+每条结果保留原始检索顺序、rerank 顺序、引用、答案和延迟，再计算 Recall@K、MRR、引用 precision/recall、严格关键点覆盖率、同义组关键点覆盖率和拒答准确率。严格指标使用原始标注逐字匹配，保证历史趋势稳定；同义组指标允许经过人工审计的自然语言或代码等价表述，避免把 `worker_prefetch_multiplier=1` 与“预取一个”之类的正确答案记为未命中。两者独立保存，不能用同义组分数覆盖严格历史值。拒答检测只检查答案第一结论句，并移除其中的引号内容和 inline code，避免“讨论无法回答这一标记”的元问题被误判成模型拒答。运行可按已经存在的 `run_id + case_id` 结果续跑，避免 Worker 中断后重复消耗全部模型额度。PostgreSQL 保存评测事实，报告 API 只聚合已持久化结果，因此后续增加可选 LLM-as-Judge 或不同检索策略时不需要重做数据模型。
 
 评测用例将检索主文档 `expected_document_ids` 与允许引用文档 `acceptable_citation_document_ids` 分开。前者衡量检索是否找到权威依据，后者衡量答案引用是否落在直接支持材料内，避免为了提升 Citation Precision 而人为放宽 Recall ground truth。

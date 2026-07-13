@@ -186,6 +186,26 @@ def test_citation_precision_can_allow_secondary_supporting_documents() -> None:
     assert metrics["citation_recall"] == 1.0
 
 
+def test_key_point_groups_credit_synonyms_without_changing_strict_coverage() -> None:
+    metrics = calculate_case_metrics(
+        answer="存在对话历史时才会改写，MRR 使用 1.0 / first_rank 计算。",
+        retrieved=[{"document_id": "expected"}],
+        reranked=[{"document_id": "expected"}],
+        citations=[{"document_id": "expected"}],
+        expected_document_ids=["expected"],
+        required_key_points=["历史消息", "倒数"],
+        required_key_point_groups=[
+            ["历史消息", "对话历史", "history"],
+            ["倒数", "1.0 / first_rank", "1/first_rank"],
+        ],
+        should_refuse=False,
+    )
+
+    assert metrics["key_point_coverage"] == 0.0
+    assert metrics["key_point_group_coverage"] == 1.0
+    assert len(metrics["matched_key_point_groups"]) == 2
+
+
 def test_evaluation_case_ground_truth_validation() -> None:
     with pytest.raises(ValidationError):
         EvaluationCaseCreate(
@@ -214,6 +234,33 @@ def test_expected_documents_are_always_acceptable_citations() -> None:
     )
 
     assert case.acceptable_citation_document_ids == [primary, supporting]
+    assert case.required_key_point_groups == []
+
+
+def test_missing_key_point_groups_are_backfilled_as_singletons() -> None:
+    case = EvaluationCaseCreate(
+        question="问题",
+        reference_answer="答案",
+        expected_document_ids=[uuid4()],
+        required_key_points=["第一点", "第二点"],
+        required_key_point_groups=[["第一点", "要点一"]],
+    )
+
+    assert case.required_key_point_groups == [
+        ["第一点", "要点一"],
+        ["第二点"],
+    ]
+
+
+def test_key_point_groups_must_be_anchored_to_strict_points() -> None:
+    with pytest.raises(ValidationError):
+        EvaluationCaseCreate(
+            question="问题",
+            reference_answer="答案",
+            expected_document_ids=[uuid4()],
+            required_key_points=["严格关键点"],
+            required_key_point_groups=[["只有别名"]],
+        )
 
 
 def test_evaluation_routes_are_exposed() -> None:

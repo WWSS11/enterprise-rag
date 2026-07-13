@@ -33,6 +33,7 @@ class EvaluationCaseCreate(BaseModel):
         default_factory=list, max_length=100
     )
     required_key_points: list[str] = Field(default_factory=list, max_length=100)
+    required_key_point_groups: list[list[str]] = Field(default_factory=list, max_length=100)
     should_refuse: bool = False
     tags: list[str] = Field(default_factory=list, max_length=50)
 
@@ -47,6 +48,32 @@ class EvaluationCaseCreate(BaseModel):
         self.required_key_points = list(
             dict.fromkeys(point.strip() for point in self.required_key_points if point.strip())
         )
+        groups: list[list[str]] = []
+        grouped_points: set[str] = set()
+        for raw_group in self.required_key_point_groups:
+            if len(raw_group) > 20:
+                raise ValueError("key point groups cannot contain more than 20 aliases")
+            group = list(
+                dict.fromkeys(alias.strip() for alias in raw_group if alias.strip())
+            )
+            if any(len(alias) > 500 for alias in group):
+                raise ValueError("key point aliases cannot exceed 500 characters")
+            anchors = [point for point in self.required_key_points if point in group]
+            if len(anchors) != 1:
+                raise ValueError(
+                    "each key point group must contain exactly one required key point"
+                )
+            anchor = anchors[0]
+            if anchor in grouped_points:
+                raise ValueError("required key points cannot appear in multiple groups")
+            grouped_points.add(anchor)
+            groups.append([anchor, *(alias for alias in group if alias != anchor)])
+        groups.extend(
+            [point]
+            for point in self.required_key_points
+            if point not in grouped_points
+        )
+        self.required_key_point_groups = groups
         self.tags = list(dict.fromkeys(tag.strip() for tag in self.tags if tag.strip()))
         if self.should_refuse and (
             self.expected_document_ids or self.acceptable_citation_document_ids
@@ -71,6 +98,7 @@ class EvaluationCaseRead(BaseModel):
     expected_document_ids: list[str]
     acceptable_citation_document_ids: list[str]
     required_key_points: list[str]
+    required_key_point_groups: list[list[str]]
     should_refuse: bool
     tags: list[str]
     created_at: datetime
@@ -130,6 +158,7 @@ class EvaluationResultReport(EvaluationResultRead):
     expected_document_ids: list[str]
     acceptable_citation_document_ids: list[str]
     required_key_points: list[str]
+    required_key_point_groups: list[list[str]]
     should_refuse: bool
     tags: list[str]
 

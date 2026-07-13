@@ -321,6 +321,9 @@ class EvaluationCase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         JSON, default=list, nullable=False
     )
     required_key_points: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    required_key_point_groups: Mapped[list[list[str]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     should_refuse: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
 

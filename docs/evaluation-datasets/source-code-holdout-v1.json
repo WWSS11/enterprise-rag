@@ -55,6 +55,7 @@
       "reference_answer": "只考虑同一 source section 内、当前单元类型为 prose 的相邻 atomic；按余弦相似度从低到高排序，最多取配置百分位对应的少量位置，并要求相似度低于阈值。默认百分位为 15%，阈值为 0.58。",
       "expected_document_names": ["chunking-service.py.txt"],
       "required_key_points": ["同一", "source section", "prose", "15%", "0.58"],
+      "required_key_point_groups": [["同一"], ["source section", "source_section_index", "源 section"], ["prose"], ["15%", "semantic_break_percentile"], ["0.58", "semantic_break_threshold"]],
       "should_refuse": false,
       "tags": ["holdout", "chunking", "semantic"]
     },
@@ -63,6 +64,7 @@
       "reference_answer": "它先调用 truncate_to_tokens；如果结果为空，就至少取 remaining 的第一个字符，然后从 remaining 中移除该片段，因此每轮至少消费一个字符。",
       "expected_document_names": ["chunking-service.py.txt"],
       "required_key_points": ["truncate_to_tokens", "第一个字符", "至少", "消费"],
+      "required_key_point_groups": [["truncate_to_tokens"], ["第一个字符", "remaining[:1]"], ["至少", "最少"], ["消费", "移除", "删除"]],
       "should_refuse": false,
       "tags": ["holdout", "chunking", "termination"]
     },
@@ -71,6 +73,7 @@
       "reference_answer": "下一起点使用 max(local_start + 1, next_start)，无论 overlap 计算返回什么，local_start 都至少增加 1。",
       "expected_document_names": ["chunking-service.py.txt"],
       "required_key_points": ["max", "local_start + 1", "至少增加 1"],
+      "required_key_point_groups": [["max"], ["local_start + 1", "local_start+1"], ["至少增加 1", "至少大 1", "至少比旧值大 1"]],
       "should_refuse": false,
       "tags": ["holdout", "chunking", "overlap"]
     },
@@ -95,6 +98,7 @@
       "reference_answer": "按传入顺序获取，并按相反顺序释放；这保持嵌套锁的栈式释放顺序，并在异常时清理已经成功获取的锁。",
       "expected_document_names": ["job-control-service.py.txt"],
       "required_key_points": ["传入顺序", "相反顺序", "异常", "释放"],
+      "required_key_point_groups": [["传入顺序", "给定顺序", "顺序获取"], ["相反顺序", "反向", "reversed"], ["异常", "finally"], ["释放", "unlock"]],
       "should_refuse": false,
       "tags": ["holdout", "locking", "cleanup"]
     },
@@ -176,6 +180,7 @@
       "reference_answer": "先按排名顺序对 document_id 去重，再寻找第一个预期文档的文档级排名，MRR 为该排名的倒数。",
       "expected_document_names": ["evaluation-service.py.txt"],
       "required_key_points": ["document_id", "去重", "第一个", "倒数"],
+      "required_key_point_groups": [["document_id"], ["去重", "deduplicate", "seen"], ["第一个", "first_rank"], ["倒数", "1.0 / first_rank", "1/first_rank"]],
       "should_refuse": false,
       "tags": ["holdout", "evaluation", "mrr"]
     },
@@ -184,6 +189,7 @@
       "reference_answer": "为了避免答案后面的局部保留说明被误判成整题拒答，只检查第一个段落形成的开头结论，并截取规范化后的前 180 个字符匹配拒答标记。",
       "expected_document_names": ["evaluation-service.py.txt"],
       "required_key_points": ["第一个段落", "局部", "180", "拒答标记"],
+      "required_key_point_groups": [["第一个段落", "opening_paragraph"], ["局部", "补充性限制", "caveat"], ["180", "前 180"], ["拒答标记", "REFUSAL_MARKERS"]],
       "should_refuse": false,
       "tags": ["holdout", "evaluation", "refusal"]
     },
@@ -192,6 +198,7 @@
       "reference_answer": "只有存在历史消息，并且去空白后的问题少于 5 个字符，或者包含“这、它、上述、之前、该”等指代标记时才重写。",
       "expected_document_names": ["rag-graph.py.txt"],
       "required_key_points": ["历史消息", "少于 5", "指代", "重写"],
+      "required_key_point_groups": [["历史消息", "对话历史", "history"], ["少于 5", "小于 5", "长度小于 5", "< 5"], ["指代", "ANAPHORA_MARKERS"], ["重写", "rewrite_query"]],
       "should_refuse": false,
       "tags": ["holdout", "langgraph", "rewrite"]
     },
@@ -200,6 +207,7 @@
       "reference_answer": "任务完成后才确认，Worker 每次只预取一个任务，并在 Worker 丢失时把任务退回队列，从而支持长任务故障后的重新投递并减少单个 Worker 囤积任务。",
       "expected_document_names": ["celery-app.py.txt"],
       "required_key_points": ["完成后", "预取一个", "Worker 丢失", "重新投递"],
+      "required_key_point_groups": [["完成后", "acks_late"], ["预取一个", "prefetch_multiplier=1", "worker_prefetch_multiplier=1"], ["Worker 丢失", "worker_lost", "worker lost"], ["重新投递", "重投", "redelivery"]],
       "should_refuse": false,
       "tags": ["holdout", "celery", "delivery"]
     },
@@ -208,6 +216,7 @@
       "reference_answer": "API 使用 SELECT FOR UPDATE 锁住文档行并检查 active_document_job；数据库再用部分唯一索引约束 document_id 在 queued/running 状态下只能出现一次。",
       "expected_document_names": ["documents-api.py.txt", "job-concurrency-migration.py.txt"],
       "required_key_points": ["SELECT FOR UPDATE", "active_document_job", "部分唯一索引", "queued", "running"],
+      "required_key_point_groups": [["SELECT FOR UPDATE", "with_for_update"], ["active_document_job"], ["部分唯一索引", "unique index"], ["queued"], ["running"]],
       "should_refuse": false,
       "tags": ["holdout", "api", "concurrency"]
     },

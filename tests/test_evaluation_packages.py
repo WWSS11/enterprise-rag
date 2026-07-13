@@ -22,8 +22,10 @@ def test_source_code_holdout_package_is_self_consistent() -> None:
     for case in cases:
         expected = set(case["expected_document_names"])
         acceptable = set(case.get("acceptable_citation_document_names", expected))
+        groups = case.get("required_key_point_groups", [])
         assert expected.issubset(upload_names)
         assert acceptable.issubset(upload_names)
+        assert all(group and all(alias.strip() for alias in group) for group in groups)
         if case["should_refuse"]:
             assert not expected
         else:

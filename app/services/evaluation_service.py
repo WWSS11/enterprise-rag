@@ -91,6 +91,7 @@ def calculate_case_metrics(
     expected_document_ids: list[str],
     acceptable_citation_document_ids: list[str] | None = None,
     required_key_points: list[str],
+    required_key_point_groups: list[list[str]] | None = None,
     should_refuse: bool,
 ) -> dict[str, Any]:
     retrieval = ranking_metrics(retrieved, expected_document_ids)
@@ -105,6 +106,18 @@ def calculate_case_metrics(
         point
         for point in required_key_points
         if normalize_for_matching(point) in answer_normalized
+    ]
+    key_point_groups = required_key_point_groups or [
+        [point] for point in required_key_points
+    ]
+    matched_key_point_groups = [
+        group
+        for group in key_point_groups
+        if any(
+            normalize_for_matching(alias) in answer_normalized
+            for alias in group
+            if alias.strip()
+        )
     ]
     actual_refusal = detect_refusal(answer, citations)
 
@@ -127,6 +140,12 @@ def calculate_case_metrics(
             else None
         ),
         "matched_key_points": matched_key_points,
+        "key_point_group_coverage": (
+            len(matched_key_point_groups) / len(key_point_groups)
+            if key_point_groups
+            else None
+        ),
+        "matched_key_point_groups": matched_key_point_groups,
         "expected_refusal": should_refuse,
         "actual_refusal": actual_refusal,
         "refusal_correct": actual_refusal == should_refuse,
@@ -224,6 +243,7 @@ async def execute_rag_case(
         expected_document_ids=case.expected_document_ids,
         acceptable_citation_document_ids=case.acceptable_citation_document_ids,
         required_key_points=case.required_key_points,
+        required_key_point_groups=case.required_key_point_groups,
         should_refuse=case.should_refuse,
     )
     return {
@@ -247,6 +267,7 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
         "citation_precision",
         "citation_recall",
         "key_point_coverage",
+        "key_point_group_coverage",
     )
     summary: dict[str, Any] = {}
     for metric_name in metric_names:
@@ -336,6 +357,7 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
                     case.acceptable_citation_document_ids
                 ),
                 required_key_points=case.required_key_points,
+                required_key_point_groups=case.required_key_point_groups,
                 should_refuse=case.should_refuse,
             )
         results = [result for result, _ in rows]
