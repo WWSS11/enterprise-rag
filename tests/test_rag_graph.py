@@ -5,6 +5,7 @@ from app.rag.graph import (
     generate,
     get_rag_graph,
     needs_query_rewrite,
+    order_context_candidates,
     select_answer_citations,
 )
 from app.rag.state import RagState
@@ -93,3 +94,74 @@ def test_select_answer_citations_deduplicates_repeated_markers() -> None:
     )
 
     assert citations == [candidate]
+
+
+def test_context_candidate_diversity_preserves_first_document_rank() -> None:
+    candidates = [
+        {"document_id": "a", "chunk_id": "a-1"},
+        {"document_id": "a", "chunk_id": "a-2"},
+        {"document_id": "b", "chunk_id": "b-1"},
+        {"document_id": "c", "chunk_id": "c-1"},
+        {"document_id": "b", "chunk_id": "b-2"},
+    ]
+
+    ordered = order_context_candidates(candidates, diversify_documents=True)
+
+    assert [item["chunk_id"] for item in ordered] == [
+        "a-1",
+        "b-1",
+        "c-1",
+        "a-2",
+        "b-2",
+    ]
+
+
+def test_context_candidate_diversity_can_be_disabled() -> None:
+    candidates = [
+        {"document_id": "a", "chunk_id": "a-1"},
+        {"document_id": "a", "chunk_id": "a-2"},
+        {"document_id": "b", "chunk_id": "b-1"},
+    ]
+
+    assert order_context_candidates(
+        candidates, diversify_documents=False
+    ) == candidates
+
+
+def test_context_candidate_diversity_does_not_promote_low_score_noise() -> None:
+    candidates = [
+        {"document_id": "a", "chunk_id": "a-1", "rerank_score": 0.9},
+        {"document_id": "a", "chunk_id": "a-2", "rerank_score": 0.6},
+        {"document_id": "b", "chunk_id": "b-1", "rerank_score": 0.01},
+        {"document_id": "a", "chunk_id": "a-3", "rerank_score": 0.005},
+    ]
+
+    ordered = order_context_candidates(
+        candidates,
+        diversify_documents=True,
+        min_score_ratio=0.1,
+    )
+
+    assert [item["chunk_id"] for item in ordered] == ["a-1", "a-2", "b-1", "a-3"]
+
+
+def test_context_candidate_diversity_promotes_relevant_cross_document_evidence() -> None:
+    candidates = [
+        {"document_id": "api", "chunk_id": "api-1", "rerank_score": 0.137},
+        {"document_id": "ingestion", "chunk_id": "ingest-1", "rerank_score": 0.058},
+        {"document_id": "ingestion", "chunk_id": "ingest-2", "rerank_score": 0.057},
+        {"document_id": "api", "chunk_id": "api-2", "rerank_score": 0.057},
+        {"document_id": "graph", "chunk_id": "graph-1", "rerank_score": 0.037},
+    ]
+
+    ordered = order_context_candidates(
+        candidates,
+        diversify_documents=True,
+        min_score_ratio=0.1,
+    )
+
+    assert [item["chunk_id"] for item in ordered[:3]] == [
+        "api-1",
+        "ingest-1",
+        "graph-1",
+    ]

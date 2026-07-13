@@ -172,6 +172,12 @@ def build_config_snapshot() -> dict[str, Any]:
         "context_max_tokens": settings.context_max_tokens,
         "context_max_parents": settings.context_max_parents,
         "context_neighbor_window": settings.context_neighbor_window,
+        "context_document_diversity_enabled": (
+            settings.context_document_diversity_enabled
+        ),
+        "context_document_diversity_min_score_ratio": (
+            settings.context_document_diversity_min_score_ratio
+        ),
         "milvus_collection_alias": settings.milvus_collection_alias,
     }
 

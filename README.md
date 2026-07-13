@@ -131,6 +131,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 - `APP_RERANK_TIMEOUT_SECONDS=30`、`APP_RERANK_MAX_ATTEMPTS=2`：只对瞬时网络、429 和 5xx 做一次短重试，失败后快速回退 RRF。
 - `APP_SEMANTIC_CHUNKING_ENABLED=true`、`APP_SEMANTIC_BREAK_PERCENTILE=15`：只把相邻 atomic 中差异最大的少量位置作为语义断点，避免过度切碎。
 - `APP_CONTEXT_NEIGHBOR_WINDOW=1`：rerank 后扩展命中父节及前后相邻章节，再受总 token 预算限制。
+- `APP_CONTEXT_DOCUMENT_DIVERSITY_ENABLED=true`、`APP_CONTEXT_DOCUMENT_DIVERSITY_MIN_SCORE_RATIO=0.1`：上下文先覆盖分数达到最高 rerank 分数 10% 的不同文档，再补同文档 parent，避免重复 chunk 挤掉跨文档证据，同时不提升极低分噪声。
 - `APP_FEISHU_*`：飞书应用、空间、租户和目标知识库配置。
 
 请求身份边界当前为 `X-Tenant-Id`、`X-User-Id` 和可选的 `X-Identity-Secret`。生产环境应由 OIDC/JWT 网关完成认证，后端只信任受保护的内部网络身份头。
@@ -190,6 +191,8 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 
 不复用原说明文档和问题、直接使用 10 份实现源码进行的独立验证见 [`docs/evaluation-baselines/source-code-holdout-v1-2026-07-12.md`](docs/evaluation-baselines/source-code-holdout-v1-2026-07-12.md)，对应固定数据包为 [`docs/evaluation-datasets/source-code-holdout-v1.json`](docs/evaluation-datasets/source-code-holdout-v1.json)。
 
+文档多样性上下文排序的 Control、Naive 与 10% 分数门槛消融，以及项目架构回归结果见 [`docs/evaluation-baselines/context-document-diversity-ablation-2026-07-13.md`](docs/evaluation-baselines/context-document-diversity-ablation-2026-07-13.md)。
+
 ## 飞书同步
 
 启用 `APP_FEISHU_ENABLED=true` 后，Celery Beat 每 12 小时触发一次同步。同步流程为：递归读取 Wiki 节点 → 获取 docx/sheet/bitable 内容 → 对比 `source_key` 与更新时间/校验和 → 只排队变化文档 → 为远端消失节点创建删除任务。Redis 分布式锁防止多个 Beat/Worker 重复同步。
@@ -206,6 +209,6 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：39 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、四轮项目架构基线、一轮独立源码 holdout 和一次引用 ground-truth 审计已做端到端验证。
+当前验证结果：43 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、四轮项目架构基线、一轮独立源码 holdout、上下文多样性消融和一次引用 ground-truth 审计已做端到端验证。
 
 模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

@@ -56,7 +56,7 @@ sequenceDiagram
 
 ## 多粒度检索
 
-Milvus 只索引 retrieval chunk，并通过 Dense Vector 与内置 BM25 各召回一组候选，使用 RRF 融合后交给 reranker。硬相似度阈值默认关闭，避免在 rerank 前误删低 dense 分但关键词准确的结果。完成重排后，系统依据 `parent_section_id` 去 PostgreSQL 扩展父块，并受总 token 数和父块数量双重预算约束；旧索引数据则使用相邻 retrieval chunk 兼容扩展。文档处于 `reindexing` 时仍使用 PostgreSQL 中已经发布的旧 `index_version` 提供检索，只有新版本和元数据在同一事务中发布后才切换。
+Milvus 只索引 retrieval chunk，并通过 Dense Vector 与内置 BM25 各召回一组候选，使用 RRF 融合后交给 reranker。硬相似度阈值默认关闭，避免在 rerank 前误删低 dense 分但关键词准确的结果。完成重排后，系统依据 `parent_section_id` 去 PostgreSQL 扩展父块，并受总 token 数和父块数量双重预算约束；旧索引数据则使用相邻 retrieval chunk 兼容扩展。上下文候选先覆盖 rerank 分数达到最高分 10% 的不同文档，再按原排序补充同文档 parent；低于门槛的噪声不会被多样性策略提前。文档处于 `reindexing` 时仍使用 PostgreSQL 中已经发布的旧 `index_version` 提供检索，只有新版本和元数据在同一事务中发布后才切换。
 
 生成状态区分 `context_sources` 与 `citations`：前者记录实际送入模型的上下文来源，后者只包含答案文本中明确出现的 `[来源:文件名#chunk-N]`。这避免把“模型看过的资料”误报成“答案实际引用的资料”，也使引用精度评测具有明确语义。
 

@@ -188,11 +188,51 @@ async def rerank(state: RagState) -> RagState:
     }
 
 
+def order_context_candidates(
+    reranked: list[dict[str, Any]],
+    *,
+    diversify_documents: bool,
+    min_score_ratio: float = 0.0,
+) -> list[dict[str, Any]]:
+    """Promote one sufficiently relevant candidate per document before repeats."""
+
+    if not diversify_documents:
+        return list(reranked)
+    scores = [
+        float(item.get("rerank_score", item.get("score", 0.0))) for item in reranked
+    ]
+    maximum_score = max(scores, default=0.0)
+    minimum_score = maximum_score * min_score_ratio
+    first_per_document: list[dict[str, Any]] = []
+    selected_indexes: set[int] = set()
+    seen_documents: set[str] = set()
+    for index, item in enumerate(reranked):
+        if maximum_score > 0 and scores[index] < minimum_score:
+            continue
+        document_key = str(
+            item.get("document_id")
+            or item.get("document_name")
+            or item.get("chunk_id")
+            or id(item)
+        )
+        if document_key in seen_documents:
+            continue
+        seen_documents.add(document_key)
+        first_per_document.append(item)
+        selected_indexes.add(index)
+    remaining = [item for index, item in enumerate(reranked) if index not in selected_indexes]
+    return [*first_per_document, *remaining]
+
+
 async def expand_context(state: RagState) -> RagState:
     """Expand reranked retrieval chunks to their parent sections after ranking."""
 
     settings = get_settings()
-    reranked = state.get("reranked", [])
+    reranked = order_context_candidates(
+        state.get("reranked", []),
+        diversify_documents=settings.context_document_diversity_enabled,
+        min_score_ratio=settings.context_document_diversity_min_score_ratio,
+    )
     if not reranked:
         return {"expanded": []}
 

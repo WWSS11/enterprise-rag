@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     context_max_tokens: int = Field(default=4_000, ge=256, le=32_000)
     context_max_parents: int = Field(default=5, ge=1, le=20)
     context_neighbor_window: int = Field(default=1, ge=0, le=3)
+    context_document_diversity_enabled: bool = True
+    context_document_diversity_min_score_ratio: float = Field(
+        default=0.1, ge=0.0, le=1.0
+    )
     upload_dir: Path = Path("data/uploads")
     connector_dir: Path = Path("data/connectors")
     scan_roots: dict[str, Path] = Field(default_factory=lambda: {"default": Path("data/import")})
