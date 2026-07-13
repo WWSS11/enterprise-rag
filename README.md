@@ -132,7 +132,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 - `APP_SEMANTIC_CHUNKING_ENABLED=true`、`APP_SEMANTIC_BREAK_PERCENTILE=15`：只把相邻 atomic 中差异最大的少量位置作为语义断点，避免过度切碎。
 - `APP_CONTEXT_NEIGHBOR_WINDOW=1`：rerank 后扩展命中父节及前后相邻章节，再受总 token 预算限制。
 - `APP_CONTEXT_DOCUMENT_DIVERSITY_ENABLED=true`、`APP_CONTEXT_DOCUMENT_DIVERSITY_MIN_SCORE_RATIO=0.1`：上下文先覆盖分数达到最高 rerank 分数 10% 的不同文档，再补同文档 parent，避免重复 chunk 挤掉跨文档证据，同时不提升极低分噪声。
-- 生成阶段使用版本化的 `minimal-sufficient-v1` 引用策略：优先使用高排名证据，一个来源足够时不叠加第二个，不为背景实现或总结句重复引用；无效、歧义和重复标记会进入 API/评测诊断。
+- 生成阶段使用版本化的 `citation-integrity-v1` 引用完整性策略：保持已经验证的回答提示不变，仅严格解析精确来源；无效、歧义、不精确和连续重复标记会进入 API/评测诊断。
 - `APP_FEISHU_*`：飞书应用、空间、租户和目标知识库配置。
 
 请求身份边界当前为 `X-Tenant-Id`、`X-User-Id` 和可选的 `X-Identity-Secret`。生产环境应由 OIDC/JWT 网关完成认证，后端只信任受保护的内部网络身份头。

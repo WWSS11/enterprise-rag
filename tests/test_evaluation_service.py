@@ -146,6 +146,21 @@ def test_explicit_refusal_in_first_sentence_is_still_detected() -> None:
     assert metrics["refusal_correct"] is True
 
 
+def test_cannot_provide_is_detected_as_refusal() -> None:
+    metrics = calculate_case_metrics(
+        answer="无法提供当前账户余额，因为资料中没有用量信息。",
+        retrieved=[{"document_id": "context"}],
+        reranked=[{"document_id": "context"}],
+        citations=[{"document_id": "context"}],
+        expected_document_ids=[],
+        required_key_points=[],
+        should_refuse=True,
+    )
+
+    assert metrics["actual_refusal"] is True
+    assert metrics["refusal_correct"] is True
+
+
 def test_case_metrics_record_rerank_fallback() -> None:
     metrics = calculate_case_metrics(
         answer="答案",
@@ -311,6 +326,7 @@ def test_evaluation_summary_aggregates_citation_marker_diagnostics() -> None:
                 "ambiguous_markers": 1,
                 "imprecise_markers": 0,
                 "duplicate_markers": 1,
+                "repeated_markers": 2,
             }
         },
         first_token_ms=None,
@@ -325,6 +341,7 @@ def test_evaluation_summary_aggregates_citation_marker_diagnostics() -> None:
     assert summary["citation_invalid_markers"] == 1
     assert summary["citation_ambiguous_markers"] == 1
     assert summary["citation_imprecise_markers"] == 0
+    assert summary["citation_repeated_markers"] == 2
 
 
 def test_evaluation_case_ground_truth_validation() -> None:

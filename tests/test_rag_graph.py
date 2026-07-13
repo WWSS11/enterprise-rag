@@ -97,7 +97,25 @@ def test_select_answer_citations_deduplicates_repeated_markers() -> None:
     )
 
     assert citations == [candidate]
+    assert diagnostics["duplicate_markers"] == 0
+    assert diagnostics["repeated_markers"] == 1
+
+
+def test_adjacent_duplicate_citation_is_a_policy_violation() -> None:
+    candidate = {
+        "document_id": "document-a",
+        "document_name": "a.md",
+        "chunk_id": "chunk-a",
+        "chunk_index": 2,
+    }
+
+    citations, diagnostics = resolve_answer_citations(
+        "结论。[来源:a.md#chunk-2][来源:a.md#chunk-2]", [candidate]
+    )
+
+    assert citations == [candidate]
     assert diagnostics["duplicate_markers"] == 1
+    assert diagnostics["repeated_markers"] == 0
 
 
 def test_ambiguous_citation_without_chunk_is_not_guessed() -> None:
@@ -138,10 +156,10 @@ def test_unique_citation_without_chunk_can_be_resolved() -> None:
     assert diagnostics["imprecise_markers"] == 1
 
 
-def test_citation_policy_requires_minimal_precise_sources() -> None:
-    assert "最少来源" in RAG_SYSTEM_PROMPT
-    assert "精确的 chunk 编号" in RAG_SYSTEM_PROMPT
-    assert "不要为背景代码" in RAG_SYSTEM_PROMPT
+def test_citation_integrity_policy_keeps_original_answer_constraints() -> None:
+    assert "只能依据给定资料回答" in RAG_SYSTEM_PROMPT
+    assert "[来源:文件名#chunk-N]" in RAG_SYSTEM_PROMPT
+    assert "资料不足时明确说明不知道" in RAG_SYSTEM_PROMPT
 
 
 def test_context_candidate_diversity_preserves_first_document_rank() -> None:

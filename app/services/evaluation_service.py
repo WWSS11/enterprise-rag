@@ -27,6 +27,7 @@ REFUSAL_MARKERS = (
     "无法根据提供的资料",
     "不知道",
     "无法回答",
+    "无法提供",
     "没有给出",
     "未提供",
     "没有包含",
@@ -542,6 +543,9 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
     duplicate_markers = sum(
         int(item.get("duplicate_markers", 0)) for item in citation_diagnostics
     )
+    repeated_markers = sum(
+        int(item.get("repeated_markers", 0)) for item in citation_diagnostics
+    )
     first_token_values = [
         result.first_token_ms
         for result in results
@@ -583,6 +587,7 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
             "citation_invalid_markers": invalid_markers,
             "citation_ambiguous_markers": ambiguous_markers,
             "citation_imprecise_markers": imprecise_markers,
+            "citation_repeated_markers": repeated_markers,
             "average_first_token_ms": (
                 round(fmean(first_token_values), 2) if first_token_values else None
             ),
