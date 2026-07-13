@@ -13,7 +13,7 @@
 - Redis 原子令牌桶，同时限制用户/租户分钟速率和每日配额；Redis 故障默认拒绝高成本聊天请求。
 - Celery 异步解析、embedding、删除、受控目录扫描、索引重建和飞书同步；每个 Worker 子进程复用持久异步事件循环。
 - PostgreSQL 部分唯一索引保证同一文档和全量重建只能存在一个活动任务；Worker 使用 advisory lock 协调文档任务与全量索引切换，Celery 重投复用同一目标索引版本。
-- 内置 RAG 自动评测：评测数据集、标准问答、异步批量运行、配置快照和逐用例报告；确定性计算 Recall@K、MRR、引用、严格关键点、同义组关键点、拒答与延迟指标。
+- 内置 RAG 自动评测：评测数据集、标准问答、异步批量运行、配置快照和逐用例报告；确定性计算 Recall@K、MRR、引用、严格关键点、同义组关键点、引用证据支撑、拒答与延迟指标。
 - 文档解析支持 TXT、Markdown、CSV、JSON、XML、PDF、DOCX（含表格）、PPTX、XLSX/XLSM、旧版 XLS、HTML。
 - 结构优先、上下文感知的多粒度分块：保留 Markdown/HTML/DOCX 标题层级和页码/幻灯片/工作表元数据；语义边界可配置，embedding 文本自动补充文档与章节上下文。
 - 批量 embedding 失败后逐条重试；默认任一分块失败就保留旧索引并标记任务失败，可显式开启部分入库。
@@ -181,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 
 `expected_document_ids` 表示必须召回的权威主文档，用于 Recall/MRR；`acceptable_citation_document_ids` 表示允许答案引用的直接支持文档，只用于 Citation Precision。主文档会自动并入允许引用集合。`required_key_points` 保留严格字面覆盖率，`required_key_point_groups` 中每个内层数组表示一组等价表述，任意一个别名命中即视为该组命中。每组必须包含且只包含一个严格关键点；没有显式填写同义组的严格关键点会自动补成单元素组，因此两个指标的分母一致，可以长期并行比较。
 
-每次运行固定保存当时的聊天模型、embedding、rerank、TopK、阈值和分块参数。第一版不使用 LLM-as-Judge，避免评测结果受额外模型随机性和成本影响；答案忠实度先通过预期文档引用、关键点覆盖和拒答准确率衡量，后续可在同一结果模型上增加可选裁判模型。
+每次运行固定保存当时的聊天模型、embedding、rerank、TopK、阈值和分块参数。评测结果还会保存答案实际引用的父级/相邻章节证据快照，使用关键点同义组计算 `citation_grounded_key_point_coverage`、`citation_key_point_support_rate` 和 `citation_required_point_support_precision`。这些指标用于区分“引用了 ground truth 之外但确实支持结论的资料”和“只提供背景、未支撑必答关键点的冗余引用”。第一版不使用 LLM-as-Judge，避免评测结果受额外模型随机性和成本影响；后续可在同一结果模型上增加可选裁判模型。
 
 首份真实评测集见 [`docs/evaluation-datasets/project-architecture-v1.json`](docs/evaluation-datasets/project-architecture-v1.json)，对应基线报告见 [`docs/evaluation-baselines/project-architecture-v1-2026-07-11.md`](docs/evaluation-baselines/project-architecture-v1-2026-07-11.md)。
 
@@ -200,6 +200,8 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 拒答检测对“讨论拒答机制”元问题的修复和四个历史运行的无模型重算结果见 [`docs/evaluation-baselines/refusal-detection-recalculation-2026-07-13.md`](docs/evaluation-baselines/refusal-detection-recalculation-2026-07-13.md)。
 
 严格关键点与人工审计同义组的双指标设计、四个历史运行的无模型回算结果见 [`docs/evaluation-baselines/key-point-group-audit-2026-07-13.md`](docs/evaluation-baselines/key-point-group-audit-2026-07-13.md)。
+
+引用证据快照、关键点支撑指标和 Citation Precision 剩余误差拆分见 [`docs/evaluation-baselines/citation-evidence-grounding-2026-07-13.md`](docs/evaluation-baselines/citation-evidence-grounding-2026-07-13.md)。
 
 ## 飞书同步
 

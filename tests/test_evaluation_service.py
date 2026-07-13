@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.main import app
 from app.schemas.evaluation import EvaluationCaseCreate
 from app.services.evaluation_service import (
+    build_citation_evidence,
     calculate_case_metrics,
     ranking_metrics,
 )
@@ -204,6 +205,97 @@ def test_key_point_groups_credit_synonyms_without_changing_strict_coverage() -> 
     assert metrics["key_point_coverage"] == 0.0
     assert metrics["key_point_group_coverage"] == 1.0
     assert len(metrics["matched_key_point_groups"]) == 2
+
+
+def test_citation_evidence_supports_answered_key_point_groups() -> None:
+    metrics = calculate_case_metrics(
+        answer="Worker 每次只预取一个任务，并在丢失时重新投递。",
+        retrieved=[{"document_id": "expected"}],
+        reranked=[{"document_id": "expected", "chunk_id": "chunk-1"}],
+        citations=[
+            {
+                "document_id": "expected",
+                "document_name": "celery.py",
+                "chunk_id": "chunk-1",
+            }
+        ],
+        citation_evidence=[
+            {
+                "chunk_id": "chunk-1",
+                "evidence_content": (
+                    "worker_prefetch_multiplier=1\n"
+                    "task_reject_on_worker_lost=True  # redelivery"
+                ),
+            }
+        ],
+        expected_document_ids=["expected"],
+        required_key_points=["预取一个", "重新投递"],
+        required_key_point_groups=[
+            ["预取一个", "worker_prefetch_multiplier=1"],
+            ["重新投递", "redelivery"],
+        ],
+        should_refuse=False,
+    )
+
+    assert metrics["citation_grounded_key_point_coverage"] == 1.0
+    assert metrics["citation_key_point_support_rate"] == 1.0
+    assert metrics["citation_required_point_support_precision"] == 1.0
+    assert len(metrics["citation_grounded_key_point_groups"]) == 2
+
+
+def test_citation_evidence_reports_unsupported_answered_points() -> None:
+    metrics = calculate_case_metrics(
+        answer="任务会重新投递。",
+        retrieved=[{"document_id": "expected"}],
+        reranked=[{"document_id": "expected", "chunk_id": "chunk-1"}],
+        citations=[
+            {
+                "document_id": "expected",
+                "document_name": "celery.py",
+                "chunk_id": "chunk-1",
+            }
+        ],
+        citation_evidence=[
+            {"chunk_id": "chunk-1", "evidence_content": "task_acks_late=True"}
+        ],
+        expected_document_ids=["expected"],
+        required_key_points=["重新投递"],
+        required_key_point_groups=[["重新投递", "redelivery"]],
+        should_refuse=False,
+    )
+
+    assert metrics["citation_grounded_key_point_coverage"] == 0.0
+    assert metrics["citation_key_point_support_rate"] == 0.0
+    assert metrics["citation_required_point_support_precision"] == 0.0
+    assert metrics["citation_unsupported_answer_key_point_groups"] == [
+        ["重新投递", "redelivery"]
+    ]
+
+
+def test_citation_evidence_snapshots_expanded_generation_context() -> None:
+    citations = [
+        {
+            "document_id": "document-1",
+            "document_name": "guide.md",
+            "chunk_id": "chunk-1",
+            "chunk_index": 3,
+        }
+    ]
+    evidence = build_citation_evidence(
+        citations,
+        [
+            {
+                **citations[0],
+                "parent_section_id": "parent-1",
+                "index_version": "version-1",
+                "content": "retrieval chunk",
+                "context_content": "parent and neighboring section evidence",
+            }
+        ],
+    )
+
+    assert evidence[0]["evidence_content"] == "parent and neighboring section evidence"
+    assert evidence[0]["reconstructed"] is False
 
 
 def test_evaluation_case_ground_truth_validation() -> None:

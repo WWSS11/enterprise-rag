@@ -10,11 +10,13 @@ from uuid import UUID
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import EvaluationCase, EvaluationResult, EvaluationRun
+from app.db.models import DocumentSection, EvaluationCase, EvaluationResult, EvaluationRun
 from app.db.session import AsyncSessionFactory
 from app.rag.graph import get_rag_graph
+from app.services.chunking_service import truncate_to_tokens
 from app.services.model_provider import validate_rag_configuration
 
 logger = structlog.get_logger(__name__)
@@ -82,6 +84,210 @@ def detect_refusal(answer: str, citations: list[dict[str, Any]]) -> bool:
     )
 
 
+def build_citation_evidence(
+    citations: list[dict[str, Any]], expanded: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Snapshot only the generation context explicitly cited by the answer."""
+
+    expanded_by_chunk = {
+        str(item.get("chunk_id", "")): item
+        for item in expanded
+        if item.get("chunk_id")
+    }
+    evidence: list[dict[str, Any]] = []
+    for citation in citations:
+        item = expanded_by_chunk.get(str(citation.get("chunk_id", "")))
+        if item is None:
+            continue
+        evidence.append(
+            {
+                "document_id": str(citation.get("document_id", "")),
+                "document_name": str(citation.get("document_name", "")),
+                "chunk_id": str(citation.get("chunk_id", "")),
+                "chunk_index": int(citation.get("chunk_index", 0)),
+                "parent_section_id": str(item.get("parent_section_id", "")),
+                "index_version": str(item.get("index_version", "")),
+                "evidence_content": str(
+                    item.get("context_content", item.get("content", ""))
+                ),
+                "reconstructed": False,
+            }
+        )
+    return evidence
+
+
+async def reconstruct_citation_evidence(
+    db: AsyncSession,
+    citations: list[dict[str, Any]],
+    reranked: list[dict[str, Any]],
+    *,
+    neighbor_window: int,
+    max_tokens: int,
+) -> list[dict[str, Any]]:
+    """Best-effort reconstruction for runs created before evidence snapshots existed."""
+
+    reranked_by_chunk = {
+        str(item.get("chunk_id", "")): item
+        for item in reranked
+        if item.get("chunk_id")
+    }
+    cited_items = [
+        (citation, reranked_by_chunk.get(str(citation.get("chunk_id", ""))))
+        for citation in citations
+    ]
+    parent_ids: list[UUID] = []
+    for _, item in cited_items:
+        if item is None:
+            continue
+        try:
+            parent_ids.append(UUID(str(item.get("parent_section_id", ""))))
+        except ValueError:
+            continue
+
+    parents: dict[str, DocumentSection] = {}
+    sections_by_document: dict[tuple[UUID, str], dict[int, DocumentSection]] = {}
+    if parent_ids:
+        parents = {
+            str(section.id): section
+            for section in (
+                await db.scalars(select(DocumentSection).where(DocumentSection.id.in_(parent_ids)))
+            ).all()
+        }
+        document_ids = {parent.document_id for parent in parents.values()}
+        if document_ids:
+            sections = (
+                await db.scalars(
+                    select(DocumentSection).where(
+                        DocumentSection.document_id.in_(document_ids)
+                    )
+                )
+            ).all()
+            for section in sections:
+                sections_by_document.setdefault(
+                    (section.document_id, section.index_version), {}
+                )[section.section_index] = section
+
+    evidence: list[dict[str, Any]] = []
+    for citation, item in cited_items:
+        if item is None:
+            continue
+        parent = parents.get(str(item.get("parent_section_id", "")))
+        content = str(item.get("content", ""))
+        if parent is not None:
+            siblings = sections_by_document.get(
+                (parent.document_id, parent.index_version), {}
+            )
+            content = "\n\n".join(
+                siblings[index].content
+                for index in range(
+                    max(0, parent.section_index - neighbor_window),
+                    parent.section_index + neighbor_window + 1,
+                )
+                if index in siblings
+            ) or content
+        evidence.append(
+            {
+                "document_id": str(citation.get("document_id", "")),
+                "document_name": str(citation.get("document_name", "")),
+                "chunk_id": str(citation.get("chunk_id", "")),
+                "chunk_index": int(citation.get("chunk_index", 0)),
+                "parent_section_id": str(item.get("parent_section_id", "")),
+                "index_version": str(item.get("index_version", "")),
+                "evidence_content": truncate_to_tokens(content, max_tokens),
+                "reconstructed": True,
+            }
+        )
+    return evidence
+
+
+def calculate_citation_key_point_support(
+    *,
+    answer: str,
+    citations: list[dict[str, Any]],
+    citation_evidence: list[dict[str, Any]],
+    key_point_groups: list[list[str]],
+) -> dict[str, Any]:
+    answer_normalized = normalize_for_matching(answer)
+    evidence_by_chunk = {
+        str(item.get("chunk_id", "")): normalize_for_matching(
+            str(
+                item.get(
+                    "evidence_content",
+                    item.get("context_content", item.get("content", "")),
+                )
+            )
+        )
+        for item in citation_evidence
+        if item.get("chunk_id")
+    }
+    matched_groups: list[list[str]] = []
+    grounded_groups: list[list[str]] = []
+    supported_chunk_ids: set[str] = set()
+    support_details: list[dict[str, Any]] = []
+    for group in key_point_groups:
+        answer_aliases = [
+            alias
+            for alias in group
+            if alias.strip() and normalize_for_matching(alias) in answer_normalized
+        ]
+        if not answer_aliases:
+            continue
+        matched_groups.append(group)
+        supporting_citations: list[dict[str, str]] = []
+        for citation in citations:
+            chunk_id = str(citation.get("chunk_id", ""))
+            evidence = evidence_by_chunk.get(chunk_id, "")
+            evidence_aliases = [
+                alias
+                for alias in group
+                if alias.strip() and normalize_for_matching(alias) in evidence
+            ]
+            if evidence_aliases:
+                supported_chunk_ids.add(chunk_id)
+                supporting_citations.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "document_name": str(citation.get("document_name", "")),
+                        "matched_alias": evidence_aliases[0],
+                    }
+                )
+        if supporting_citations:
+            grounded_groups.append(group)
+        support_details.append(
+            {
+                "key_point_group": group,
+                "answer_matched_alias": answer_aliases[0],
+                "supporting_citations": supporting_citations,
+            }
+        )
+
+    cited_chunk_ids = {
+        str(citation.get("chunk_id", ""))
+        for citation in citations
+        if citation.get("chunk_id")
+    }
+    return {
+        "citation_grounded_key_point_coverage": (
+            len(grounded_groups) / len(key_point_groups) if key_point_groups else None
+        ),
+        "citation_key_point_support_rate": (
+            len(grounded_groups) / len(matched_groups) if matched_groups else None
+        ),
+        "citation_required_point_support_precision": (
+            len(supported_chunk_ids.intersection(cited_chunk_ids)) / len(cited_chunk_ids)
+            if cited_chunk_ids and matched_groups
+            else None
+        ),
+        "citation_grounded_key_point_groups": grounded_groups,
+        "citation_unsupported_answer_key_point_groups": [
+            group for group in matched_groups if group not in grounded_groups
+        ],
+        "citation_supported_chunk_ids": sorted(supported_chunk_ids),
+        "citation_unsupported_chunk_ids": sorted(cited_chunk_ids - supported_chunk_ids),
+        "citation_key_point_support": support_details,
+    }
+
+
 def calculate_case_metrics(
     *,
     answer: str,
@@ -92,6 +298,7 @@ def calculate_case_metrics(
     acceptable_citation_document_ids: list[str] | None = None,
     required_key_points: list[str],
     required_key_point_groups: list[list[str]] | None = None,
+    citation_evidence: list[dict[str, Any]] | None = None,
     should_refuse: bool,
 ) -> dict[str, Any]:
     retrieval = ranking_metrics(retrieved, expected_document_ids)
@@ -119,6 +326,12 @@ def calculate_case_metrics(
             if alias.strip()
         )
     ]
+    grounding = calculate_citation_key_point_support(
+        answer=answer,
+        citations=citations,
+        citation_evidence=citation_evidence or reranked,
+        key_point_groups=key_point_groups,
+    )
     actual_refusal = detect_refusal(answer, citations)
 
     return {
@@ -146,6 +359,7 @@ def calculate_case_metrics(
             else None
         ),
         "matched_key_point_groups": matched_key_point_groups,
+        **grounding,
         "expected_refusal": should_refuse,
         "actual_refusal": actual_refusal,
         "refusal_correct": actual_refusal == should_refuse,
@@ -235,6 +449,9 @@ async def execute_rag_case(
     retrieved = list(final_state.get("retrieved", []))
     reranked = list(final_state.get("reranked", []))
     citations = list(final_state.get("citations", []))
+    citation_evidence = build_citation_evidence(
+        citations, list(final_state.get("expanded", reranked))
+    )
     metrics = calculate_case_metrics(
         answer=answer,
         retrieved=retrieved,
@@ -244,6 +461,7 @@ async def execute_rag_case(
         acceptable_citation_document_ids=case.acceptable_citation_document_ids,
         required_key_points=case.required_key_points,
         required_key_point_groups=case.required_key_point_groups,
+        citation_evidence=citation_evidence,
         should_refuse=case.should_refuse,
     )
     return {
@@ -252,6 +470,7 @@ async def execute_rag_case(
         "retrieved_documents": retrieved,
         "reranked_documents": reranked,
         "citations": citations,
+        "citation_evidence": citation_evidence,
         "metrics": metrics,
         "first_token_ms": first_token_ms,
         "total_latency_ms": total_latency_ms,
@@ -268,6 +487,9 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
         "citation_recall",
         "key_point_coverage",
         "key_point_group_coverage",
+        "citation_grounded_key_point_coverage",
+        "citation_key_point_support_rate",
+        "citation_required_point_support_precision",
     )
     summary: dict[str, Any] = {}
     for metric_name in metric_names:
@@ -347,6 +569,16 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
         for result, case in rows:
             if result.status != "succeeded":
                 continue
+            if not result.citation_evidence and result.citations:
+                result.citation_evidence = await reconstruct_citation_evidence(
+                    db,
+                    result.citations,
+                    result.reranked_documents,
+                    neighbor_window=int(
+                        run.config_snapshot.get("context_neighbor_window", 1)
+                    ),
+                    max_tokens=int(run.config_snapshot.get("context_max_tokens", 4_000)),
+                )
             result.metrics = calculate_case_metrics(
                 answer=result.answer or "",
                 retrieved=result.retrieved_documents,
@@ -358,6 +590,7 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
                 ),
                 required_key_points=case.required_key_points,
                 required_key_point_groups=case.required_key_point_groups,
+                citation_evidence=result.citation_evidence,
                 should_refuse=case.should_refuse,
             )
         results = [result for result, _ in rows]

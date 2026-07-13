@@ -144,6 +144,7 @@ class EvaluationResultRead(BaseModel):
     retrieved_documents: list[dict[str, Any]]
     reranked_documents: list[dict[str, Any]]
     citations: list[dict[str, Any]]
+    citation_evidence: list[dict[str, Any]]
     metrics: dict[str, Any]
     first_token_ms: float | None
     total_latency_ms: float | None

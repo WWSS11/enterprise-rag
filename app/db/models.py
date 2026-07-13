@@ -389,6 +389,9 @@ class EvaluationResult(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         JSON, default=list, nullable=False
     )
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    citation_evidence: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     first_token_ms: Mapped[float | None] = mapped_column(Float)
     total_latency_ms: Mapped[float | None] = mapped_column(Float)
