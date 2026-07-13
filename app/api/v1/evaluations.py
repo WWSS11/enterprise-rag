@@ -21,13 +21,21 @@ from app.schemas.evaluation import (
     EvaluationCaseRead,
     EvaluationDatasetCreate,
     EvaluationDatasetRead,
+    EvaluationQualityGateReport,
+    EvaluationQualityGateRequest,
     EvaluationReport,
     EvaluationResultRead,
     EvaluationResultReport,
+    EvaluationRunComparison,
+    EvaluationRunComparisonRequest,
     EvaluationRunCreate,
     EvaluationRunRead,
 )
 from app.services.audit_service import record_audit
+from app.services.evaluation_gate_service import (
+    compare_evaluation_runs,
+    evaluate_quality_gate,
+)
 from app.services.evaluation_service import (
     build_config_snapshot,
     recalculate_evaluation_run_metrics,
@@ -348,6 +356,97 @@ async def get_run(
 ) -> EvaluationRun:
     run, _ = await _authorize_run(db, run_id, *identity)
     return run
+
+
+async def _comparison_runs(
+    db: AsyncSession,
+    candidate_run_id: UUID,
+    baseline_run_id: UUID,
+    tenant_id: str,
+    user_id: str,
+) -> tuple[EvaluationRun, EvaluationRun]:
+    candidate, _ = await _authorize_run(db, candidate_run_id, tenant_id, user_id)
+    baseline, _ = await _authorize_run(db, baseline_run_id, tenant_id, user_id)
+    if candidate.dataset_id != baseline.dataset_id:
+        raise HTTPException(
+            status_code=422, detail="evaluation runs must belong to the same dataset"
+        )
+    if candidate.status != "succeeded" or baseline.status != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail="evaluation runs must be succeeded before comparison",
+        )
+    return baseline, candidate
+
+
+@router.post(
+    "/runs/{candidate_run_id}/compare",
+    response_model=EvaluationRunComparison,
+)
+async def compare_runs(
+    candidate_run_id: UUID,
+    payload: EvaluationRunComparisonRequest,
+    identity: tuple[str, str] = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationRunComparison:
+    baseline, candidate = await _comparison_runs(
+        db, candidate_run_id, payload.baseline_run_id, *identity
+    )
+    return EvaluationRunComparison.model_validate(
+        compare_evaluation_runs(baseline, candidate)
+    )
+
+
+@router.post(
+    "/runs/{candidate_run_id}/gate",
+    response_model=EvaluationQualityGateReport,
+)
+async def gate_run(
+    candidate_run_id: UUID,
+    payload: EvaluationQualityGateRequest,
+    identity: tuple[str, str] = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationQualityGateReport:
+    tenant_id, user_id = identity
+    baseline, candidate = await _comparison_runs(
+        db, candidate_run_id, payload.baseline_run_id, tenant_id, user_id
+    )
+    try:
+        raw_report = evaluate_quality_gate(
+            baseline,
+            candidate,
+            max_metric_regressions=payload.thresholds.max_metric_regressions,
+            minimum_candidate_metrics=payload.thresholds.minimum_candidate_metrics,
+            max_latency_increase_ratios=(
+                payload.thresholds.max_latency_increase_ratios
+            ),
+            require_zero_failed_cases=payload.thresholds.require_zero_failed_cases,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    report = EvaluationQualityGateReport.model_validate(raw_report)
+    record_audit(
+        db,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        action="evaluations.quality_gate_checked",
+        resource_type="evaluation_run",
+        resource_id=str(candidate.id),
+        details={
+            "baseline_run_id": str(baseline.id),
+            "passed": report.passed,
+            "failed_metrics": [
+                check.metric for check in report.checks if not check.passed
+            ],
+        },
+    )
+    await db.commit()
+    if not report.passed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=report.model_dump(mode="json"),
+        )
+    return report
 
 
 @router.post("/runs/{run_id}/recalculate", response_model=EvaluationRunRead)

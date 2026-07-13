@@ -76,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\up.ps1
 
 `up.ps1` 只启动 PostgreSQL、Redis、etcd、MinIO 和 Milvus，不构建 Python 应用镜像。FastAPI、Celery Worker 和 Beat 都从项目内 `.venv` 运行，代码修改无需重建 Docker 镜像。
 
-开发脚本会从 `infra/.env` 只导入模型 API 和身份密钥，不会导入其中的容器数据库地址；数据库、Redis、Milvus 仍使用根目录 `.env` 的 `127.0.0.1` 开发端口。因此已有密钥不需要复制，也不会被打印。
+所有 `APP_*` 应用配置、模型密钥和身份密钥统一放在根目录 `.env`。`infra/.env` 只保存 PostgreSQL、Redis、MinIO 等 Docker 中间件变量；开发脚本无需额外导入密钥。
 
 分别打开终端运行：
 
@@ -117,7 +117,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 
 ## 关键配置
 
-本地运行读取 `.env`，Compose 读取 `infra/.env`。常用配置：
+本地应用直接读取根目录 `.env`；Compose 同时读取根 `.env` 的应用配置和 `infra/.env` 的中间件配置。常用配置：
 
 - `APP_CHAT_*`、`APP_EMBEDDING_*`、`APP_RERANK_*`：OpenAI-compatible 模型接口。
 - `APP_IDENTITY_HEADER_SECRET`：可信 API 网关向后端透传身份时使用；`production` 环境不允许为空。
@@ -159,6 +159,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 | `GET` | `/api/v1/evaluations/runs/{id}` | 查询评测进度和汇总指标 |
 | `GET` | `/api/v1/evaluations/runs/{id}/report` | 查询逐用例评测报告 |
 | `POST` | `/api/v1/evaluations/runs/{id}/recalculate` | 不调用模型，按当前确定性规则重算已有结果指标 |
+| `POST` | `/api/v1/evaluations/runs/{candidate_id}/compare` | 对比基线与候选运行的指标、配置差异 |
+| `POST` | `/api/v1/evaluations/runs/{candidate_id}/gate` | 执行质量门禁；回退时返回 HTTP 409 |
 
 ## RAG 自动评测
 
@@ -184,6 +186,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 
 每次运行固定保存当时的聊天模型、embedding、rerank、TopK、阈值和分块参数。评测结果还会保存答案实际引用的父级/相邻章节证据快照，使用关键点同义组计算 `citation_grounded_key_point_coverage`、`citation_key_point_support_rate` 和 `citation_required_point_support_precision`。这些指标用于区分“引用了 ground truth 之外但确实支持结论的资料”和“只提供背景、未支撑必答关键点的冗余引用”。第一版不使用 LLM-as-Judge，避免评测结果受额外模型随机性和成本影响；后续可在同一结果模型上增加可选裁判模型。
 
+运行对比请求：
+
+```json
+{
+  "baseline_run_id": "基线运行 UUID"
+}
+```
+
+默认质量门禁不允许 Retrieval/Rerank/Citation Recall 和拒答准确率下降；关键点覆盖、引用支撑率最多下降 `0.02`；首 token 延迟最多增加 `25%`，总延迟最多增加 `20%`；候选运行必须零失败。`/gate` 支持在请求中通过 `thresholds` 覆盖这些值，失败时返回 HTTP 409，Problem Details 的 `data` 字段包含逐指标检查结果，可直接用于 CI/CD 阻止发布。
+
 首份真实评测集见 [`docs/evaluation-datasets/project-architecture-v1.json`](docs/evaluation-datasets/project-architecture-v1.json)，对应基线报告见 [`docs/evaluation-baselines/project-architecture-v1-2026-07-11.md`](docs/evaluation-baselines/project-architecture-v1-2026-07-11.md)。
 
 多粒度混合检索 V2 报告见 [`docs/evaluation-baselines/project-architecture-v2-2026-07-12.md`](docs/evaluation-baselines/project-architecture-v2-2026-07-12.md)。
@@ -206,6 +218,8 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 
 最少充分引用策略、分数过滤否决实验和结构诊断设计见 [`docs/evaluation-baselines/minimal-sufficient-citation-policy-2026-07-13.md`](docs/evaluation-baselines/minimal-sufficient-citation-policy-2026-07-13.md)。
 
+真实运行对比、默认质量门禁规则以及 v1/v2 自动拒绝结果见 [`docs/evaluation-baselines/quality-gate-validation-2026-07-13.md`](docs/evaluation-baselines/quality-gate-validation-2026-07-13.md)。
+
 ## 飞书同步
 
 启用 `APP_FEISHU_ENABLED=true` 后，Celery Beat 每 12 小时触发一次同步。同步流程为：递归读取 Wiki 节点 → 获取 docx/sheet/bitable 内容 → 对比 `source_key` 与更新时间/校验和 → 只排队变化文档 → 为远端消失节点创建删除任务。Redis 分布式锁防止多个 Beat/Worker 重复同步。
@@ -219,9 +233,9 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 .\.venv\Scripts\python -m ruff check app tests migrations
 .\.venv\Scripts\python -m mypy app
 .\.venv\Scripts\python -m pip check
-docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
+docker compose --env-file .\infra\versions.env --env-file .\infra\.env --env-file .\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：46 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、四轮项目架构基线、一轮独立源码 holdout、上下文多样性消融、拒答规则重算和一次引用 ground-truth 审计已做端到端验证。
+当前验证结果：65 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、真实源码 holdout、上下文多样性消融、引用证据审计、引用策略 A/B 和质量门禁均已做端到端验证。
 
-模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。
+模型密钥不属于仓库；本地 `.venv` 与完整 Compose 部署都从根目录 `.env` 读取应用配置，`infra/.env` 仅保存中间件变量。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

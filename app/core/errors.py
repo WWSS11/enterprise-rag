@@ -48,8 +48,12 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> Response:
+        detail = exc.detail if isinstance(exc.detail, str) else "request rejected"
+        payload = _problem(request, exc.status_code, detail)
+        if not isinstance(exc.detail, str):
+            payload["data"] = exc.detail
         return response(
-            _problem(request, exc.status_code, str(exc.detail)),
+            payload,
             exc.status_code,
             exc.headers,
         )

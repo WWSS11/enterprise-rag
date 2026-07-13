@@ -109,6 +109,93 @@ class EvaluationRunCreate(BaseModel):
     dataset_id: UUID
 
 
+class EvaluationRunComparisonRequest(BaseModel):
+    baseline_run_id: UUID
+
+
+class EvaluationMetricComparison(BaseModel):
+    metric: str
+    baseline: float | None
+    candidate: float | None
+    delta: float | None
+    relative_delta: float | None
+
+
+class EvaluationConfigDifference(BaseModel):
+    key: str
+    baseline: Any
+    candidate: Any
+
+
+class EvaluationRunComparison(BaseModel):
+    baseline_run_id: UUID
+    candidate_run_id: UUID
+    dataset_id: UUID
+    metrics: list[EvaluationMetricComparison]
+    config_differences: list[EvaluationConfigDifference]
+
+
+class EvaluationQualityGateThresholds(BaseModel):
+    max_metric_regressions: dict[str, float] = Field(
+        default_factory=lambda: {
+            "retrieval_recall_at_k": 0.0,
+            "rerank_recall_at_k": 0.0,
+            "citation_recall": 0.0,
+            "key_point_group_coverage": 0.02,
+            "citation_key_point_support_rate": 0.02,
+            "citation_required_point_support_precision": 0.02,
+            "refusal_accuracy": 0.0,
+        }
+    )
+    minimum_candidate_metrics: dict[str, float] = Field(
+        default_factory=lambda: {
+            "retrieval_recall_at_k": 0.95,
+            "rerank_recall_at_k": 0.90,
+            "refusal_accuracy": 0.95,
+        }
+    )
+    max_latency_increase_ratios: dict[str, float] = Field(
+        default_factory=lambda: {
+            "average_first_token_ms": 0.25,
+            "average_total_latency_ms": 0.20,
+        }
+    )
+    require_zero_failed_cases: bool = True
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> Self:
+        for mapping in (
+            self.max_metric_regressions,
+            self.max_latency_increase_ratios,
+        ):
+            if any(value < 0 for value in mapping.values()):
+                raise ValueError("quality gate tolerances cannot be negative")
+        return self
+
+
+class EvaluationQualityGateRequest(EvaluationRunComparisonRequest):
+    thresholds: EvaluationQualityGateThresholds = Field(
+        default_factory=EvaluationQualityGateThresholds
+    )
+
+
+class EvaluationQualityGateCheck(BaseModel):
+    metric: str
+    rule: str
+    threshold: float
+    baseline: float | None
+    candidate: float | None
+    actual: float | None
+    passed: bool
+    reason: str
+
+
+class EvaluationQualityGateReport(BaseModel):
+    passed: bool
+    comparison: EvaluationRunComparison
+    checks: list[EvaluationQualityGateCheck]
+
+
 class EvaluationRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

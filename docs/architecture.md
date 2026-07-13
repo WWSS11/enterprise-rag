@@ -91,3 +91,9 @@ Celery prefork 子进程不会为每个任务反复创建事件循环。`app/wor
 拒答检测只检查答案第一结论句，并移除其中的引号内容和 inline code，避免“讨论无法回答这一标记”的元问题被误判成模型拒答。运行可按已经存在的 `run_id + case_id` 结果续跑，避免 Worker 中断后重复消耗全部模型额度。PostgreSQL 保存评测事实，报告 API 只聚合已持久化结果，因此后续增加可选 LLM-as-Judge 或不同检索策略时不需要重做数据模型。
 
 评测用例将检索主文档 `expected_document_ids` 与允许引用文档 `acceptable_citation_document_ids` 分开。前者衡量检索是否找到权威依据，后者衡量答案引用是否落在直接支持材料内，避免为了提升 Citation Precision 而人为放宽 Recall ground truth。
+
+## 运行对比与质量门禁
+
+运行对比只接受同一数据集且状态为 `succeeded` 的基线与候选运行。服务对固定指标集合计算绝对变化、相对变化，并列出配置快照差异，避免把模型、分块、检索或引用策略变化隐藏在单一总分中。
+
+默认门禁规则以“不能用局部优化交换核心质量”为原则：Retrieval/Rerank/Citation Recall 和拒答准确率不允许下降；关键点覆盖与引用支撑允许最多 2 个百分点的波动；首 token 和总延迟分别允许 25% 与 20% 增长；候选必须零失败并满足 Retrieval Recall 0.95、Rerank Recall 0.90、拒答准确率 0.95 的绝对下限。规则通过请求体可覆盖，但每次检查都会写入审计日志。门禁通过返回 200，失败返回 409 与完整检查报告，CI/CD 只需依据 HTTP 状态即可阻止发布。

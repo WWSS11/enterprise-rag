@@ -19,6 +19,6 @@ if (-not (Test-Path (Join-Path $ProjectRoot ".env"))) {
 
 if (-not $InstallOnly) {
     Write-Host "Virtual environment ready: $Venv"
-    Write-Host "Start middleware: docker compose --env-file infra/versions.env --env-file infra/.env -f infra/compose.yml up -d postgres redis etcd minio milvus"
+    Write-Host "Start middleware: powershell -ExecutionPolicy Bypass -File .\scripts\up.ps1"
     Write-Host "Run API locally: .\.venv\Scripts\python -m uvicorn app.main:app --reload"
 }

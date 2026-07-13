@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $InfraEnv = Join-Path $ProjectRoot "infra\.env"
+$RootEnv = Join-Path $ProjectRoot ".env"
 
 if (-not (Test-Path $InfraEnv)) {
     Copy-Item (Join-Path $ProjectRoot "infra\.env.example") $InfraEnv
@@ -9,6 +10,7 @@ if (-not (Test-Path $InfraEnv)) {
 docker compose `
   --env-file (Join-Path $ProjectRoot "infra\versions.env") `
   --env-file $InfraEnv `
+  --env-file $RootEnv `
   -f (Join-Path $ProjectRoot "infra\compose.yml") `
   up -d postgres redis etcd minio milvus
 

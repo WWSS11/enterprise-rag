@@ -1,7 +1,6 @@
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-. (Join-Path $PSScriptRoot "import-dev-secrets.ps1")
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Virtual environment not found. Run scripts\bootstrap.ps1 first."

@@ -1,6 +1,8 @@
 import httpx
 import pytest
+from fastapi import FastAPI, HTTPException
 
+from app.core.errors import install_exception_handlers
 from app.main import app
 
 
@@ -26,3 +28,21 @@ async def test_metrics_endpoint() -> None:
         response = await client.get("/metrics")
     assert response.status_code == 200
     assert "rag_http_requests_total" in response.text
+
+
+@pytest.mark.asyncio
+async def test_problem_details_preserve_structured_http_exception_data() -> None:
+    test_app = FastAPI()
+    install_exception_handlers(test_app)
+
+    @test_app.get("/blocked")
+    async def blocked() -> None:
+        raise HTTPException(status_code=409, detail={"passed": False, "checks": []})
+
+    transport = httpx.ASGITransport(app=test_app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/blocked")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "request rejected"
+    assert response.json()["data"] == {"passed": False, "checks": []}
