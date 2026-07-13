@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -72,9 +72,7 @@ class Settings(BaseSettings):
     context_max_parents: int = Field(default=5, ge=1, le=20)
     context_neighbor_window: int = Field(default=1, ge=0, le=3)
     context_document_diversity_enabled: bool = True
-    context_document_diversity_min_score_ratio: float = Field(
-        default=0.1, ge=0.0, le=1.0
-    )
+    context_document_diversity_min_score_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
     upload_dir: Path = Path("data/uploads")
     connector_dir: Path = Path("data/connectors")
     scan_roots: dict[str, Path] = Field(default_factory=lambda: {"default": Path("data/import")})
@@ -108,8 +106,24 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 86_400
     conversation_history_messages: int = 20
 
+    auth_mode: Literal["trusted_header", "oidc"] = "trusted_header"
     identity_header_secret: str = ""
     admin_user_ids: set[str] = Field(default_factory=lambda: {"admin"})
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_url: str = ""
+    oidc_algorithms: set[str] = Field(default_factory=lambda: {"RS256"})
+    oidc_token_types: set[str] = Field(
+        default_factory=lambda: {"JWT", "at+jwt", "application/at+jwt"}
+    )
+    oidc_tenant_claim: str = "tenant_id"
+    oidc_roles_claim: str = "realm_access.roles"
+    oidc_groups_claim: str = "groups"
+    oidc_admin_role: str = "rag-admin"
+    oidc_jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
+    oidc_http_timeout_seconds: float = Field(default=10.0, gt=0.0, le=60.0)
+    oidc_clock_skew_seconds: int = Field(default=30, ge=0, le=300)
+    oidc_max_token_length: int = Field(default=16_384, ge=1_024, le=131_072)
 
     feishu_enabled: bool = False
     feishu_app_id: str = ""
@@ -132,11 +146,24 @@ class Settings(BaseSettings):
             )
         if self.retrieval_chunk_target_tokens > self.parent_chunk_max_tokens:
             raise ValueError(
-                "APP_RETRIEVAL_CHUNK_TARGET_TOKENS must not exceed "
-                "APP_PARENT_CHUNK_MAX_TOKENS"
+                "APP_RETRIEVAL_CHUNK_TARGET_TOKENS must not exceed APP_PARENT_CHUNK_MAX_TOKENS"
             )
-        if self.env.lower() in {"prod", "production"} and not self.identity_header_secret:
-            raise ValueError("APP_IDENTITY_HEADER_SECRET is required in production")
+        production = self.env.lower() in {"prod", "production"}
+        if self.auth_mode == "trusted_header" and production and not self.identity_header_secret:
+            raise ValueError(
+                "APP_IDENTITY_HEADER_SECRET is required for trusted_header mode in production"
+            )
+        if self.auth_mode == "oidc":
+            if not self.oidc_issuer:
+                raise ValueError("APP_OIDC_ISSUER is required for oidc mode")
+            if not self.oidc_audience:
+                raise ValueError("APP_OIDC_AUDIENCE is required for oidc mode")
+            if not self.oidc_algorithms:
+                raise ValueError("APP_OIDC_ALGORITHMS must not be empty")
+            if "none" in {item.lower() for item in self.oidc_algorithms}:
+                raise ValueError("APP_OIDC_ALGORITHMS must not allow alg=none")
+            if production and not self.oidc_issuer.startswith("https://"):
+                raise ValueError("APP_OIDC_ISSUER must use HTTPS in production")
         return self
 
 

@@ -13,6 +13,7 @@ from app.db.models import Conversation
 from app.db.session import get_db
 from app.rag.graph import get_rag_graph
 from app.schemas.chat import ChatRequest, ChatResponse
+from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.conversation_service import conversation_service
 from app.services.knowledge_base_service import knowledge_base_service
@@ -37,9 +38,10 @@ def _sse(event: str, data: Any) -> str:
 async def _prepare_chat(
     request: ChatRequest,
     db: AsyncSession,
-    tenant_id: str,
-    user_id: str,
+    identity: RequestIdentity,
 ) -> ChatContext:
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     decision = await redis_service.allow_chat_request(tenant_id, user_id)
     if not decision.allowed:
         raise HTTPException(
@@ -53,8 +55,8 @@ async def _prepare_chat(
         )
 
     try:
-        knowledge_base = await knowledge_base_service.authorize(
-            db, tenant_id, user_id, request.knowledge_base_id, required_permission="reader"
+        knowledge_base = await knowledge_base_service.authorize_identity(
+            db, identity, request.knowledge_base_id, required_permission="reader"
         )
         conversation = await conversation_service.get_or_create(
             db,
@@ -92,15 +94,14 @@ def _graph_input(
 async def _run_chat(
     request: ChatRequest,
     db: AsyncSession,
-    tenant_id: str,
-    user_id: str,
+    identity: RequestIdentity,
 ) -> ChatResponse:
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     try:
         validate_rag_configuration()
-        context = await _prepare_chat(request, db, tenant_id, user_id)
-        result = await get_rag_graph().ainvoke(
-            _graph_input(request, tenant_id, user_id, context)
-        )
+        context = await _prepare_chat(request, db, identity)
+        result = await get_rag_graph().ainvoke(_graph_input(request, tenant_id, user_id, context))
     except RuntimeError as exc:
         await db.rollback()
         raise HTTPException(
@@ -141,22 +142,23 @@ async def _run_chat(
 @router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
-    return await _run_chat(request, db, *identity)
+    return await _run_chat(request, db, identity)
 
 
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     try:
         validate_rag_configuration()
-        context = await _prepare_chat(request, db, tenant_id, user_id)
+        context = await _prepare_chat(request, db, identity)
     except RuntimeError as exc:
         await db.rollback()
         raise HTTPException(
@@ -200,9 +202,7 @@ async def chat_stream(
                     "knowledge_base_id": str(context.conversation.knowledge_base_id),
                     "retrieved_count": len(final_state.get("retrieved", [])),
                     "reranked_count": len(final_state.get("reranked", [])),
-                    "citation_diagnostics": final_state.get(
-                        "citation_diagnostics", {}
-                    ),
+                    "citation_diagnostics": final_state.get("citation_diagnostics", {}),
                 },
             )
             await conversation_service.append_exchange(
@@ -216,9 +216,7 @@ async def chat_stream(
                     "citations": citations,
                     "retrieved_count": len(final_state.get("retrieved", [])),
                     "reranked_count": len(final_state.get("reranked", [])),
-                    "citation_diagnostics": final_state.get(
-                        "citation_diagnostics", {}
-                    ),
+                    "citation_diagnostics": final_state.get("citation_diagnostics", {}),
                 },
             )
             yield _sse("done", {"status": "completed"})

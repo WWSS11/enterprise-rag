@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class KnowledgeBaseCreate(BaseModel):
@@ -29,10 +29,12 @@ class KnowledgeBaseRead(BaseModel):
 
 
 class KnowledgeBaseMemberUpsert(BaseModel):
-    user_id: str = Field(
+    principal_type: Literal["user", "group"] = "user"
+    principal_id: str = Field(
         min_length=1,
         max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._@-]*$",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]*$",
+        validation_alias=AliasChoices("principal_id", "user_id"),
     )
     permission: Literal["reader", "editor", "owner"] = "reader"
 

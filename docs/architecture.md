@@ -9,6 +9,7 @@
 ```mermaid
 sequenceDiagram
     participant C as Client
+    participant I as OIDC Provider
     participant A as FastAPI
     participant R as Redis
     participant P as PostgreSQL
@@ -16,7 +17,11 @@ sequenceDiagram
     participant M as Milvus
     participant L as Model API
 
-    C->>A: chat/stream + tenant/user/kb
+    C->>I: Authorization Code + PKCE
+    I-->>C: JWT Access Token
+    C->>A: Bearer Access Token + chat/stream
+    A->>I: Discovery/JWKS（缓存与密钥轮换）
+    A->>A: verify signature/iss/aud/exp + map identity
     A->>R: atomic user + tenant quota
     A->>P: authorize knowledge base + load history
     A->>G: question and scoped state
@@ -70,15 +75,18 @@ summary chunk 和独立神经 sparse 模型暂不进入当前主索引：它们�
 
 - 每个文档和会话必须绑定知识库。
 - `tenant` 知识库允许同租户使用；`restricted` 知识库必须有成员记录。
-- 成员权限为 `reader`、`editor`、`owner`，数据模型保留 `principal_type`，后续可扩展部门和角色。
+- 成员权限为 `reader`、`editor`、`owner`；`principal_type` 支持 OIDC 用户 `sub` 和 groups claim，群组授权不需要把每个用户逐一写入成员表。
 - Milvus 只按粗粒度租户/知识库过滤，授权事实保存在 PostgreSQL，避免把大量用户 ID 写入向量元数据。
-- 当前 Header 身份是网关集成边界，不等同于最终认证实现。
+- `RequestIdentity` 是认证与业务之间的依赖注入边界，业务 API 不读取原始 JWT，也不依赖 Keycloak 私有接口。
+- OIDC Resource Server 强制校验签名、算法白名单、`kid`、`iss`、`aud`、`exp`、`iat` 和 `sub`；tenant、roles、groups 只从通过验证的 claims 获取。
+- `aud` 必须包含当前 API 的资源标识 `enterprise-rag-api`。这同时阻止面向其他服务的 Access Token 和面向前端客户端的 ID Token 被错误接受。
+- OIDC 模式拒绝所有可信身份 Header。`trusted_header` 只保留为受保护网关内部部署的显式兼容模式，不能与 Bearer 模式混用。
 
 ## 异步运行时
 
 Celery prefork 子进程不会为每个任务反复创建事件循环。`app/workers/async_runtime.py` 为每个子进程维护一个持久 loop，使 SQLAlchemy AsyncEngine、redis-py 和异步 HTTP 客户端不会跨 loop 复用 Future。
 
-本地 Windows 开发时，PostgreSQL、Redis、Milvus、etcd、MinIO 运行在 Docker，FastAPI、Worker、Beat 从项目 `.venv` 运行。Worker 使用 Celery `solo` pool，规避 Windows 对 prefork 支持不完整的问题；容器或 Linux 部署仍使用 `prefork --concurrency=2`。两种模式读取同一套 `APP_*` 配置，但本地 `.env` 使用宿主机端口，`infra/.env` 用于 Compose 中间件密码和镜像编排。
+本地 Windows 开发时，PostgreSQL、Redis、Milvus、etcd、MinIO 和 Keycloak 运行在 Docker，FastAPI、Worker、Beat 从项目 `.venv` 运行。Worker 使用 Celery `solo` pool，规避 Windows 对 prefork 支持不完整的问题；容器或 Linux 部署仍使用 `prefork --concurrency=2`。两种模式读取同一套 `APP_*` 配置，但本地 `.env` 使用宿主机端口，`infra/.env` 用于 Compose 中间件密码和镜像编排。Keycloak realm import 只服务本地开发，正式环境通过相同的 OIDC issuer/audience/JWKS 契约接入企业 IdP。
 
 ## 自动评测闭环
 

@@ -5,10 +5,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import request_identity
-from app.core.config import get_settings
 from app.db.models import IngestionJob
 from app.db.session import get_db
 from app.schemas.document import JobRead
+from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.job_control_service import active_rebuild_job
 from app.workers.tasks import rebuild_index_task
@@ -18,11 +18,12 @@ router = APIRouter()
 
 @router.post("/rebuild-index", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
 async def rebuild_index(
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
-    tenant_id, user_id = identity
-    if user_id not in get_settings().admin_user_ids:
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
+    if not identity.is_admin:
         raise HTTPException(status_code=403, detail="index rebuild requires an administrator")
     active_job = await active_rebuild_job(db)
     if active_job is not None:
@@ -63,10 +64,10 @@ async def rebuild_index(
 @router.get("/{job_id}", response_model=JobRead)
 async def get_job(
     job_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
-    tenant_id, _ = identity
+    tenant_id = identity.tenant_id
     job = await db.get(IngestionJob, job_id)
     if job is None or job.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="job not found")

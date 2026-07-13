@@ -6,7 +6,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import request_identity
-from app.core.config import get_settings
 from app.db.models import (
     Document,
     EvaluationCase,
@@ -31,6 +30,7 @@ from app.schemas.evaluation import (
     EvaluationRunCreate,
     EvaluationRunRead,
 )
+from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.evaluation_gate_service import (
     compare_evaluation_runs,
@@ -49,18 +49,16 @@ router = APIRouter()
 async def _authorize_dataset(
     db: AsyncSession,
     dataset_id: UUID,
-    tenant_id: str,
-    user_id: str,
+    identity: RequestIdentity,
     required_permission: str = "reader",
 ) -> EvaluationDataset:
     dataset = await db.get(EvaluationDataset, dataset_id)
-    if dataset is None or dataset.tenant_id != tenant_id or dataset.status != "active":
+    if dataset is None or dataset.tenant_id != identity.tenant_id or dataset.status != "active":
         raise HTTPException(status_code=404, detail="evaluation dataset not found")
     try:
-        await knowledge_base_service.authorize(
+        await knowledge_base_service.authorize_identity(
             db,
-            tenant_id,
-            user_id,
+            identity,
             dataset.knowledge_base_id,
             required_permission=required_permission,
         )
@@ -131,15 +129,15 @@ def _case_from_payload(dataset_id: UUID, payload: EvaluationCaseCreate) -> Evalu
 )
 async def create_dataset(
     payload: EvaluationDatasetCreate,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationDataset:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     try:
-        await knowledge_base_service.authorize(
+        await knowledge_base_service.authorize_identity(
             db,
-            tenant_id,
-            user_id,
+            identity,
             payload.knowledge_base_id,
             required_permission="editor",
         )
@@ -180,16 +178,16 @@ async def create_dataset(
 
 @router.get("/datasets", response_model=list[EvaluationDatasetRead])
 async def list_datasets(
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[EvaluationDataset]:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
     query = select(EvaluationDataset).where(
         EvaluationDataset.tenant_id == tenant_id,
         EvaluationDataset.status == "active",
     )
-    if user_id not in get_settings().admin_user_ids:
-        accessible = await knowledge_base_service.list_accessible(db, tenant_id, user_id)
+    if not identity.is_admin:
+        accessible = await knowledge_base_service.list_accessible_identity(db, identity)
         query = query.where(
             EvaluationDataset.knowledge_base_id.in_([item.id for item in accessible])
         )
@@ -203,10 +201,10 @@ async def list_datasets(
 @router.get("/datasets/{dataset_id}", response_model=EvaluationDatasetRead)
 async def get_dataset(
     dataset_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationDataset:
-    return await _authorize_dataset(db, dataset_id, *identity)
+    return await _authorize_dataset(db, dataset_id, identity)
 
 
 @router.post(
@@ -217,11 +215,12 @@ async def get_dataset(
 async def create_case(
     dataset_id: UUID,
     payload: EvaluationCaseCreate,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationCase:
-    tenant_id, user_id = identity
-    dataset = await _authorize_dataset(db, dataset_id, tenant_id, user_id, "editor")
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
+    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
     await _validate_expected_documents(db, dataset, [payload])
     case = _case_from_payload(dataset.id, payload)
     db.add(case)
@@ -248,11 +247,12 @@ async def create_case(
 async def create_cases_bulk(
     dataset_id: UUID,
     payload: EvaluationCaseBulkCreate,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[EvaluationCase]:
-    tenant_id, user_id = identity
-    dataset = await _authorize_dataset(db, dataset_id, tenant_id, user_id, "editor")
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
+    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
     await _validate_expected_documents(db, dataset, payload.cases)
     cases = [_case_from_payload(dataset.id, item) for item in payload.cases]
     db.add_all(cases)
@@ -273,10 +273,10 @@ async def create_cases_bulk(
 @router.get("/datasets/{dataset_id}/cases", response_model=list[EvaluationCaseRead])
 async def list_cases(
     dataset_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[EvaluationCase]:
-    await _authorize_dataset(db, dataset_id, *identity)
+    await _authorize_dataset(db, dataset_id, identity)
     return list(
         (
             await db.execute(
@@ -291,15 +291,16 @@ async def list_cases(
 @router.post("/runs", response_model=EvaluationRunRead, status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     payload: EvaluationRunCreate,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationRun:
-    tenant_id, user_id = identity
-    dataset = await _authorize_dataset(db, payload.dataset_id, tenant_id, user_id, "editor")
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
+    dataset = await _authorize_dataset(db, payload.dataset_id, identity, "editor")
     case_count = await db.scalar(
-        select(func.count()).select_from(EvaluationCase).where(
-            EvaluationCase.dataset_id == dataset.id
-        )
+        select(func.count())
+        .select_from(EvaluationCase)
+        .where(EvaluationCase.dataset_id == dataset.id)
     )
     if not case_count:
         raise HTTPException(status_code=409, detail="evaluation dataset has no cases")
@@ -339,22 +340,22 @@ async def create_run(
 
 
 async def _authorize_run(
-    db: AsyncSession, run_id: UUID, tenant_id: str, user_id: str
+    db: AsyncSession, run_id: UUID, identity: RequestIdentity
 ) -> tuple[EvaluationRun, EvaluationDataset]:
     run = await db.get(EvaluationRun, run_id)
-    if run is None or run.tenant_id != tenant_id:
+    if run is None or run.tenant_id != identity.tenant_id:
         raise HTTPException(status_code=404, detail="evaluation run not found")
-    dataset = await _authorize_dataset(db, run.dataset_id, tenant_id, user_id)
+    dataset = await _authorize_dataset(db, run.dataset_id, identity)
     return run, dataset
 
 
 @router.get("/runs/{run_id}", response_model=EvaluationRunRead)
 async def get_run(
     run_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationRun:
-    run, _ = await _authorize_run(db, run_id, *identity)
+    run, _ = await _authorize_run(db, run_id, identity)
     return run
 
 
@@ -362,11 +363,10 @@ async def _comparison_runs(
     db: AsyncSession,
     candidate_run_id: UUID,
     baseline_run_id: UUID,
-    tenant_id: str,
-    user_id: str,
+    identity: RequestIdentity,
 ) -> tuple[EvaluationRun, EvaluationRun]:
-    candidate, _ = await _authorize_run(db, candidate_run_id, tenant_id, user_id)
-    baseline, _ = await _authorize_run(db, baseline_run_id, tenant_id, user_id)
+    candidate, _ = await _authorize_run(db, candidate_run_id, identity)
+    baseline, _ = await _authorize_run(db, baseline_run_id, identity)
     if candidate.dataset_id != baseline.dataset_id:
         raise HTTPException(
             status_code=422, detail="evaluation runs must belong to the same dataset"
@@ -386,15 +386,13 @@ async def _comparison_runs(
 async def compare_runs(
     candidate_run_id: UUID,
     payload: EvaluationRunComparisonRequest,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationRunComparison:
     baseline, candidate = await _comparison_runs(
-        db, candidate_run_id, payload.baseline_run_id, *identity
+        db, candidate_run_id, payload.baseline_run_id, identity
     )
-    return EvaluationRunComparison.model_validate(
-        compare_evaluation_runs(baseline, candidate)
-    )
+    return EvaluationRunComparison.model_validate(compare_evaluation_runs(baseline, candidate))
 
 
 @router.post(
@@ -404,12 +402,13 @@ async def compare_runs(
 async def gate_run(
     candidate_run_id: UUID,
     payload: EvaluationQualityGateRequest,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationQualityGateReport:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     baseline, candidate = await _comparison_runs(
-        db, candidate_run_id, payload.baseline_run_id, tenant_id, user_id
+        db, candidate_run_id, payload.baseline_run_id, identity
     )
     try:
         raw_report = evaluate_quality_gate(
@@ -417,9 +416,7 @@ async def gate_run(
             candidate,
             max_metric_regressions=payload.thresholds.max_metric_regressions,
             minimum_candidate_metrics=payload.thresholds.minimum_candidate_metrics,
-            max_latency_increase_ratios=(
-                payload.thresholds.max_latency_increase_ratios
-            ),
+            max_latency_increase_ratios=(payload.thresholds.max_latency_increase_ratios),
             require_zero_failed_cases=payload.thresholds.require_zero_failed_cases,
         )
     except ValueError as exc:
@@ -435,9 +432,7 @@ async def gate_run(
         details={
             "baseline_run_id": str(baseline.id),
             "passed": report.passed,
-            "failed_metrics": [
-                check.metric for check in report.checks if not check.passed
-            ],
+            "failed_metrics": [check.metric for check in report.checks if not check.passed],
         },
     )
     await db.commit()
@@ -452,14 +447,15 @@ async def gate_run(
 @router.post("/runs/{run_id}/recalculate", response_model=EvaluationRunRead)
 async def recalculate_run_metrics(
     run_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationRun:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     run = await db.get(EvaluationRun, run_id)
     if run is None or run.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="evaluation run not found")
-    await _authorize_dataset(db, run.dataset_id, tenant_id, user_id, "editor")
+    await _authorize_dataset(db, run.dataset_id, identity, "editor")
     recalculated = await recalculate_evaluation_run_metrics(run.id)
     record_audit(
         db,
@@ -477,10 +473,10 @@ async def recalculate_run_metrics(
 @router.get("/runs/{run_id}/report", response_model=EvaluationReport)
 async def get_report(
     run_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationReport:
-    run, dataset = await _authorize_run(db, run_id, *identity)
+    run, dataset = await _authorize_run(db, run_id, identity)
     rows = (
         await db.execute(
             select(EvaluationResult, EvaluationCase)
@@ -496,9 +492,7 @@ async def get_report(
                 "question": case.question,
                 "reference_answer": case.reference_answer,
                 "expected_document_ids": case.expected_document_ids,
-                "acceptable_citation_document_ids": (
-                    case.acceptable_citation_document_ids
-                ),
+                "acceptable_citation_document_ids": (case.acceptable_citation_document_ids),
                 "required_key_points": case.required_key_points,
                 "required_key_point_groups": case.required_key_point_groups,
                 "should_refuse": case.should_refuse,

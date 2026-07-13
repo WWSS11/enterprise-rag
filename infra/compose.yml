@@ -110,6 +110,32 @@ services:
       retries: 5
     restart: unless-stopped
 
+  keycloak:
+    image: ${KEYCLOAK_IMAGE}
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:-keycloak_admin_change_me}
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: http://127.0.0.1:18080
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - ./keycloak/enterprise-rag-realm.json:/opt/keycloak/data/import/enterprise-rag-realm.json:ro
+      - ./volumes/keycloak:/opt/keycloak/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
   migrate:
     build:
       context: ..
@@ -138,6 +164,16 @@ services:
       APP_RERANK_RETRY_BASE_SECONDS: ${APP_RERANK_RETRY_BASE_SECONDS:-0.5}
       APP_IDENTITY_HEADER_SECRET: ${APP_IDENTITY_HEADER_SECRET:-}
       APP_ADMIN_USER_IDS: ${APP_ADMIN_USER_IDS:-["admin"]}
+      APP_AUTH_MODE: ${APP_AUTH_MODE:-trusted_header}
+      APP_OIDC_ISSUER: ${APP_OIDC_ISSUER:-}
+      APP_OIDC_AUDIENCE: ${APP_OIDC_AUDIENCE:-}
+      APP_OIDC_JWKS_URL: ${APP_OIDC_JWKS_URL:-http://keycloak:8080/realms/enterprise-rag/protocol/openid-connect/certs}
+      APP_OIDC_ALGORITHMS: ${APP_OIDC_ALGORITHMS:-["RS256"]}
+      APP_OIDC_TOKEN_TYPES: ${APP_OIDC_TOKEN_TYPES:-["JWT","at+jwt","application/at+jwt"]}
+      APP_OIDC_TENANT_CLAIM: ${APP_OIDC_TENANT_CLAIM:-tenant_id}
+      APP_OIDC_ROLES_CLAIM: ${APP_OIDC_ROLES_CLAIM:-realm_access.roles}
+      APP_OIDC_GROUPS_CLAIM: ${APP_OIDC_GROUPS_CLAIM:-groups}
+      APP_OIDC_ADMIN_ROLE: ${APP_OIDC_ADMIN_ROLE:-rag-admin}
       APP_CHUNK_SIZE: ${APP_CHUNK_SIZE:-480}
       APP_CHUNK_OVERLAP: ${APP_CHUNK_OVERLAP:-80}
       APP_RETRIEVAL_TOP_K: ${APP_RETRIEVAL_TOP_K:-40}
@@ -184,6 +220,8 @@ services:
       redis:
         condition: service_healthy
       milvus:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     healthcheck:
       test:

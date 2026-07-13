@@ -1,16 +1,45 @@
 from uuid import UUID, uuid4
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import KnowledgeBase, KnowledgeBaseMember
+from app.security.identity import RequestIdentity
 
 PERMISSION_RANK = {"reader": 10, "editor": 20, "owner": 30}
 
 
 class KnowledgeBaseService:
+    async def authorize_identity(
+        self,
+        db: AsyncSession,
+        identity: RequestIdentity,
+        knowledge_base_id: UUID | None,
+        required_permission: str = "reader",
+    ) -> KnowledgeBase:
+        return await self.authorize(
+            db,
+            identity.tenant_id,
+            identity.user_id,
+            knowledge_base_id,
+            required_permission,
+            groups=identity.groups,
+            is_admin=identity.is_admin,
+        )
+
+    async def list_accessible_identity(
+        self, db: AsyncSession, identity: RequestIdentity
+    ) -> list[KnowledgeBase]:
+        return await self.list_accessible(
+            db,
+            identity.tenant_id,
+            identity.user_id,
+            groups=identity.groups,
+            is_admin=identity.is_admin,
+        )
+
     async def get_or_create_default(
         self, db: AsyncSession, tenant_id: str, user_id: str
     ) -> KnowledgeBase:
@@ -46,6 +75,9 @@ class KnowledgeBaseService:
         user_id: str,
         knowledge_base_id: UUID | None,
         required_permission: str = "reader",
+        *,
+        groups: frozenset[str] | None = None,
+        is_admin: bool | None = None,
     ) -> KnowledgeBase:
         knowledge_base = (
             await self.get_or_create_default(db, tenant_id, user_id)
@@ -59,36 +91,80 @@ class KnowledgeBaseService:
         ):
             raise LookupError("knowledge base not found")
 
-        if user_id in get_settings().admin_user_ids:
+        if is_admin is True or (is_admin is None and user_id in get_settings().admin_user_ids):
             return knowledge_base
         if knowledge_base.access_mode == "tenant" and required_permission != "owner":
             return knowledge_base
 
-        permission = await db.scalar(
-            select(KnowledgeBaseMember.permission).where(
-                KnowledgeBaseMember.knowledge_base_id == knowledge_base.id,
+        principal_filters = [
+            and_(
                 KnowledgeBaseMember.principal_type == "user",
                 KnowledgeBaseMember.principal_id == user_id,
             )
-        )
+        ]
+        if groups:
+            principal_filters.append(
+                and_(
+                    KnowledgeBaseMember.principal_type == "group",
+                    KnowledgeBaseMember.principal_id.in_(groups),
+                )
+            )
+        permissions = (
+            await db.execute(
+                select(KnowledgeBaseMember.permission).where(
+                    KnowledgeBaseMember.knowledge_base_id == knowledge_base.id,
+                    or_(*principal_filters),
+                )
+            )
+        ).scalars()
+        permission_rank = max((PERMISSION_RANK.get(item, 0) for item in permissions), default=0)
         if (
             required_permission == "owner"
             and knowledge_base.created_by == user_id
-            and permission is None
+            and permission_rank == 0
         ):
             return knowledge_base
-        if PERMISSION_RANK.get(permission or "", 0) < PERMISSION_RANK[required_permission]:
+        if permission_rank < PERMISSION_RANK[required_permission]:
             raise PermissionError("insufficient knowledge-base permission")
         return knowledge_base
 
     async def list_accessible(
-        self, db: AsyncSession, tenant_id: str, user_id: str
+        self,
+        db: AsyncSession,
+        tenant_id: str,
+        user_id: str,
+        *,
+        groups: frozenset[str] | None = None,
+        is_admin: bool | None = None,
     ) -> list[KnowledgeBase]:
         await self.get_or_create_default(db, tenant_id, user_id)
+        if is_admin is True or (is_admin is None and user_id in get_settings().admin_user_ids):
+            result = await db.execute(
+                select(KnowledgeBase)
+                .where(
+                    KnowledgeBase.tenant_id == tenant_id,
+                    KnowledgeBase.status == "active",
+                )
+                .order_by(KnowledgeBase.is_default.desc(), KnowledgeBase.name.asc())
+            )
+            return list(result.scalars())
+
+        principal_filters = [
+            and_(
+                KnowledgeBaseMember.principal_type == "user",
+                KnowledgeBaseMember.principal_id == user_id,
+            )
+        ]
+        if groups:
+            principal_filters.append(
+                and_(
+                    KnowledgeBaseMember.principal_type == "group",
+                    KnowledgeBaseMember.principal_id.in_(groups),
+                )
+            )
         membership = exists().where(
             KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id,
-            KnowledgeBaseMember.principal_type == "user",
-            KnowledgeBaseMember.principal_id == user_id,
+            or_(*principal_filters),
         )
         result = await db.execute(
             select(KnowledgeBase)

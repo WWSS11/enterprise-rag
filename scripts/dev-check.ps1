@@ -12,7 +12,14 @@ if (-not (Test-Path -LiteralPath $Python)) {
 
 docker compose --env-file $VersionsEnv --env-file $InfraEnv --env-file $RootEnv `
     -f $Compose ps `
-    postgres redis etcd minio milvus
+    postgres redis etcd minio milvus keycloak
+
+$DiscoveryUrl = "http://127.0.0.1:18080/realms/enterprise-rag/.well-known/openid-configuration"
+$Discovery = Invoke-RestMethod -Uri $DiscoveryUrl -TimeoutSec 10
+if ($Discovery.issuer -ne "http://127.0.0.1:18080/realms/enterprise-rag") {
+    throw "Unexpected Keycloak issuer: $($Discovery.issuer)"
+}
+Write-Host "keycloak: ready ($($Discovery.issuer))"
 
 Push-Location $ProjectRoot
 try {

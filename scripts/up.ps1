@@ -12,9 +12,10 @@ docker compose `
   --env-file $InfraEnv `
   --env-file $RootEnv `
   -f (Join-Path $ProjectRoot "infra\compose.yml") `
-  up -d postgres redis etcd minio milvus
+  up -d postgres redis etcd minio milvus keycloak
 
 Write-Host "Middleware is ready. Application services run from .venv during development."
+Write-Host "Keycloak: http://127.0.0.1:18080 (realm: enterprise-rag)"
 Write-Host "API:    powershell -ExecutionPolicy Bypass -File .\scripts\dev-api.ps1"
 Write-Host "Worker: powershell -ExecutionPolicy Bypass -File .\scripts\dev-worker.ps1"
 Write-Host "Beat:   powershell -ExecutionPolicy Bypass -File .\scripts\dev-beat.ps1"

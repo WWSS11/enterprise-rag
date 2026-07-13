@@ -5,6 +5,7 @@
 ## 已实现能力
 
 - FastAPI REST、真实 token 级 SSE、OpenAPI、RFC Problem Details、请求 ID 和 Prometheus 指标。
+- 提供商无关的 OIDC/JWT Bearer 认证：Discovery + JWKS、签名轮换、issuer/audience/时间强校验，并将 tenant、roles、groups 映射为统一请求身份。
 - LangGraph 显式 `rewrite_query → hybrid_retrieve → rerank → expand_context → generate` 工作流；先重排小块，再扩展父级上下文。
 - PostgreSQL 保存文档 section、atomic、retrieval、parent 层级关系以及权限、会话、任务和审计事实，全部由 Alembic 管理。
 - Milvus 使用 Dense Vector + 内置 BM25 双路召回和 RRF 融合，并按租户、知识库过滤；PostgreSQL 会过滤失效向量版本。
@@ -25,7 +26,9 @@
 
 ```mermaid
 flowchart LR
-    Client["Client / API Gateway"] --> API["FastAPI"]
+    Client["Browser / Client"] --> OIDC["OIDC Provider / Keycloak"]
+    OIDC --> Client
+    Client -->|"Bearer JWT"| API["FastAPI"]
     API --> PG["PostgreSQL metadata + ACL + audit"]
     API --> Redis["Redis session + quota"]
     API --> Graph["LangGraph RAG"]
@@ -50,12 +53,13 @@ flowchart LR
 | SQLAlchemy / Alembic | 2.0.51 / 1.18.5 |
 | Celery / redis-py | 5.6.3 / 6.4.0 |
 | pydantic-settings | 2.14.2 |
+| PyJWT / Keycloak | 2.13.0 / 26.7.0 |
 | PostgreSQL / Redis Server | 18.4 / 8.8.0 |
 | Milvus / PyMilvus | 2.6.19 / 2.6.16 |
 | python-pptx / xlrd | 1.0.2 / 2.0.2 |
 | prometheus-client | 0.25.0 |
 
-主要版本证据：[Python 3.13.13](https://www.python.org/downloads/release/python-31313/)、[Milvus 2.6.19](https://github.com/milvus-io/milvus/releases/tag/v2.6.19)、[Milvus 官方 Compose](https://github.com/milvus-io/milvus/releases/download/v2.6.19/milvus-standalone-docker-compose.yml)、[python-pptx](https://pypi.org/project/python-pptx/)、[xlrd](https://pypi.org/project/xlrd/)、[prometheus-client](https://pypi.org/project/prometheus-client/)。Python 3.13.14 虽已发布，但本次实际构建时 Docker registry 没有可解析的 `3.13.14-slim-bookworm` manifest，因此采用最新可部署标签 3.13.13。
+主要版本证据：[Python 3.13.13](https://www.python.org/downloads/release/python-31313/)、[Milvus 2.6.19](https://github.com/milvus-io/milvus/releases/tag/v2.6.19)、[Milvus 官方 Compose](https://github.com/milvus-io/milvus/releases/download/v2.6.19/milvus-standalone-docker-compose.yml)、[Keycloak 26.7.0](https://www.keycloak.org/downloads)、[PyJWT 2.13.0](https://pypi.org/project/PyJWT/)、[python-pptx](https://pypi.org/project/python-pptx/)、[xlrd](https://pypi.org/project/xlrd/)、[prometheus-client](https://pypi.org/project/prometheus-client/)。Python 3.13.14 虽已发布，但本次实际构建时 Docker registry 没有可解析的 `3.13.14-slim-bookworm` manifest，因此采用最新可部署标签 3.13.13。
 
 ## Windows 初始化（不污染系统 Python）
 
@@ -74,7 +78,7 @@ Copy-Item .\infra\.env.example .\infra\.env
 powershell -ExecutionPolicy Bypass -File .\scripts\up.ps1
 ```
 
-`up.ps1` 只启动 PostgreSQL、Redis、etcd、MinIO 和 Milvus，不构建 Python 应用镜像。FastAPI、Celery Worker 和 Beat 都从项目内 `.venv` 运行，代码修改无需重建 Docker 镜像。
+`up.ps1` 只启动 PostgreSQL、Redis、etcd、MinIO、Milvus 和本地 Keycloak，不构建 Python 应用镜像。FastAPI、Celery Worker 和 Beat 都从项目内 `.venv` 运行，代码修改无需重建 Docker 镜像。
 
 所有 `APP_*` 应用配置、模型密钥和身份密钥统一放在根目录 `.env`。`infra/.env` 只保存 PostgreSQL、Redis、MinIO 等 Docker 中间件变量；开发脚本无需额外导入密钥。
 
@@ -108,6 +112,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-check.ps1
 - Milvus：http://127.0.0.1:19530
 - MinIO Console：http://127.0.0.1:9001
 - Redis 宿主机端口：`127.0.0.1:16379`
+- Keycloak：http://127.0.0.1:18080（Realm：`enterprise-rag`）
 
 停止中间件：
 
@@ -120,7 +125,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 本地应用直接读取根目录 `.env`；Compose 同时读取根 `.env` 的应用配置和 `infra/.env` 的中间件配置。常用配置：
 
 - `APP_CHAT_*`、`APP_EMBEDDING_*`、`APP_RERANK_*`：OpenAI-compatible 模型接口。
-- `APP_IDENTITY_HEADER_SECRET`：可信 API 网关向后端透传身份时使用；`production` 环境不允许为空。
+- `APP_AUTH_MODE=oidc`：正式认证模式；API 只接受 Bearer Access Token。
+- `APP_OIDC_ISSUER`、`APP_OIDC_AUDIENCE`：强制校验 Token 签发者和目标 API；OIDC 模式下均不可为空。
+- `APP_OIDC_ALGORITHMS=["RS256"]`：签名算法白名单，禁止 `alg=none`。
+- `APP_OIDC_TENANT_CLAIM`、`APP_OIDC_ROLES_CLAIM`、`APP_OIDC_GROUPS_CLAIM`：身份与权限 claims 映射。
+- `APP_IDENTITY_HEADER_SECRET`：仅在显式 `APP_AUTH_MODE=trusted_header` 的内部网关兼容模式使用。
 - `APP_ADMIN_USER_IDS`：允许触发全量索引重建的用户 ID 集合。
 - `APP_SCAN_ROOTS`：可扫描目录别名映射；接口不能提交任意磁盘路径。
 - `APP_ALLOW_PARTIAL_INGESTION=false`：默认不接受缺失分块的部分索引。
@@ -135,14 +144,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\down.ps1
 - 生成阶段使用版本化的 `citation-integrity-v1` 引用完整性策略：保持已经验证的回答提示不变，仅严格解析精确来源；无效、歧义、不精确和连续重复标记会进入 API/评测诊断。
 - `APP_FEISHU_*`：飞书应用、空间、租户和目标知识库配置。
 
-请求身份边界当前为 `X-Tenant-Id`、`X-User-Id` 和可选的 `X-Identity-Secret`。生产环境应由 OIDC/JWT 网关完成认证，后端只信任受保护的内部网络身份头。
+默认本地配置使用 OIDC/JWT。FastAPI 通过 Discovery/JWKS 验证 Access Token 的签名、`iss`、`aud`、`exp`、`iat` 和 `sub`；`aud` 必须包含 `enterprise-rag-api`。OIDC 模式明确拒绝 `X-Tenant-Id`、`X-User-Id` 和 `X-Identity-Secret`，避免客户端伪造租户或用户。`trusted_header` 只作为受保护 API Gateway 的兼容部署模式保留。
+
+获取本地开发 Token：
+
+```powershell
+$token = powershell -ExecutionPolicy Bypass -File .\scripts\dev-token.ps1
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/auth/me `
+  -Headers @{ Authorization = "Bearer $token" }
+```
+
+内置账号和 Direct Access Grant 只用于开发验证。正式浏览器前端应使用 Authorization Code Flow + PKCE。认证设计与真实 Token 验证见 [`docs/authentication/oidc-jwt-validation-2026-07-13.md`](docs/authentication/oidc-jwt-validation-2026-07-13.md)。
 
 ## API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| `GET` | `/api/v1/auth/me` | 返回已验证的当前用户、租户、角色、群组和认证方式 |
 | `GET/POST` | `/api/v1/knowledge-bases` | 查询可访问知识库、创建受限知识库 |
-| `PUT` | `/api/v1/knowledge-bases/{id}/members` | Owner 添加或更新用户权限 |
+| `PUT` | `/api/v1/knowledge-bases/{id}/members` | Owner 添加或更新用户/群组权限 |
 | `POST` | `/api/v1/documents` | 上传并创建异步入库任务 |
 | `POST` | `/api/v1/documents/scan` | 扫描配置好的目录别名 |
 | `GET` | `/api/v1/documents` | 只返回有权访问的知识库文档 |
@@ -236,6 +256,6 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env --env-file .\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：65 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、真实源码 holdout、上下文多样性消融、引用证据审计、引用策略 A/B 和质量门禁均已做端到端验证。
+当前验证结果：72 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 运行 PostgreSQL、Redis、Milvus、etcd、MinIO 和 Keycloak。蓝绿重建、权限授权、OIDC/JWT、Audience 强校验、群组 ACL、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、真实源码 holdout、上下文多样性消融、引用证据审计、引用策略 A/B 和质量门禁均已做端到端验证。
 
-模型密钥不属于仓库；本地 `.venv` 与完整 Compose 部署都从根目录 `.env` 读取应用配置，`infra/.env` 仅保存中间件变量。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。
+模型密钥不属于仓库；本地 `.venv` 与完整 Compose 部署都从根目录 `.env` 读取应用配置，`infra/.env` 仅保存中间件变量。生产上线应把本地 Keycloak 配置替换为企业 IdP、启用 HTTPS 和 Authorization Code Flow + PKCE，并补充密钥管理、备份策略与压测；这些是部署环境能力，不应硬编码进本仓库。

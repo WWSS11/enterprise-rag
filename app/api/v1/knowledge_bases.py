@@ -15,6 +15,7 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseMemberUpsert,
     KnowledgeBaseRead,
 )
+from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.knowledge_base_service import knowledge_base_service
 
@@ -24,10 +25,11 @@ router = APIRouter()
 @router.post("", response_model=KnowledgeBaseRead, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeBase:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     knowledge_base = KnowledgeBase(
         tenant_id=tenant_id,
         slug=payload.slug,
@@ -69,10 +71,10 @@ async def create_knowledge_base(
 
 @router.get("", response_model=list[KnowledgeBaseRead])
 async def list_knowledge_bases(
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[KnowledgeBase]:
-    knowledge_bases = await knowledge_base_service.list_accessible(db, *identity)
+    knowledge_bases = await knowledge_base_service.list_accessible_identity(db, identity)
     await db.commit()
     return knowledge_bases
 
@@ -81,13 +83,14 @@ async def list_knowledge_bases(
 async def upsert_member(
     knowledge_base_id: UUID,
     payload: KnowledgeBaseMemberUpsert,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeBaseMember:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     try:
-        await knowledge_base_service.authorize(
-            db, tenant_id, user_id, knowledge_base_id, required_permission="owner"
+        await knowledge_base_service.authorize_identity(
+            db, identity, knowledge_base_id, required_permission="owner"
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -101,8 +104,8 @@ async def upsert_member(
             id=member_id,
             tenant_id=tenant_id,
             knowledge_base_id=knowledge_base_id,
-            principal_type="user",
-            principal_id=payload.user_id,
+            principal_type=payload.principal_type,
+            principal_id=payload.principal_id,
             permission=payload.permission,
         )
         .on_conflict_do_update(
@@ -117,14 +120,18 @@ async def upsert_member(
         action="knowledge_bases.member_upserted",
         resource_type="knowledge_base",
         resource_id=str(knowledge_base_id),
-        details={"member_user_id": payload.user_id, "permission": payload.permission},
+        details={
+            "principal_type": payload.principal_type,
+            "principal_id": payload.principal_id,
+            "permission": payload.permission,
+        },
     )
     await db.commit()
     member = await db.scalar(
         select(KnowledgeBaseMember).where(
             KnowledgeBaseMember.knowledge_base_id == knowledge_base_id,
-            KnowledgeBaseMember.principal_type == "user",
-            KnowledgeBaseMember.principal_id == payload.user_id,
+            KnowledgeBaseMember.principal_type == payload.principal_type,
+            KnowledgeBaseMember.principal_id == payload.principal_id,
         )
     )
     if member is None:

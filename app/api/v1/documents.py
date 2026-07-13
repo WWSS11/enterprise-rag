@@ -19,6 +19,7 @@ from app.schemas.document import (
     JobRead,
     LocalScanRequest,
 )
+from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.job_control_service import active_document_job
 from app.services.knowledge_base_service import knowledge_base_service
@@ -36,17 +37,17 @@ SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
 @router.post("/scan", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
 async def scan_local_documents(
     payload: LocalScanRequest,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     if payload.root_alias not in get_settings().scan_roots:
         raise HTTPException(status_code=404, detail="scan root alias not found")
     try:
-        knowledge_base = await knowledge_base_service.authorize(
+        knowledge_base = await knowledge_base_service.authorize_identity(
             db,
-            tenant_id,
-            user_id,
+            identity,
             payload.knowledge_base_id,
             required_permission="editor",
         )
@@ -87,16 +88,16 @@ async def scan_local_documents(
 async def upload_document(
     file: Annotated[UploadFile, File()],
     knowledge_base_id: Annotated[UUID | None, Form()] = None,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentUploadAccepted:
     settings = get_settings()
-    tenant_id, user_id = identity
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
     try:
-        knowledge_base = await knowledge_base_service.authorize(
+        knowledge_base = await knowledge_base_service.authorize_identity(
             db,
-            tenant_id,
-            user_id,
+            identity,
             knowledge_base_id,
             required_permission="editor",
         )
@@ -186,21 +187,20 @@ async def upload_document(
 @router.get("", response_model=list[DocumentRead])
 async def list_documents(
     knowledge_base_id: UUID | None = None,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[Document]:
-    tenant_id, user_id = identity
     if knowledge_base_id is not None:
         try:
-            knowledge_base = await knowledge_base_service.authorize(
-                db, tenant_id, user_id, knowledge_base_id
+            knowledge_base = await knowledge_base_service.authorize_identity(
+                db, identity, knowledge_base_id
             )
         except (LookupError, PermissionError) as exc:
             raise HTTPException(status_code=404, detail="knowledge base not found") from exc
         knowledge_base_ids = [knowledge_base.id]
     else:
         knowledge_base_ids = [
-            item.id for item in await knowledge_base_service.list_accessible(db, tenant_id, user_id)
+            item.id for item in await knowledge_base_service.list_accessible_identity(db, identity)
         ]
     if not knowledge_base_ids:
         return []
@@ -212,25 +212,21 @@ async def list_documents(
     return list(result.scalars())
 
 
-@router.post(
-    "/{document_id}/reindex", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED
-)
+@router.post("/{document_id}/reindex", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
 async def reindex_document(
     document_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
-    tenant_id, user_id = identity
-    document = await db.scalar(
-        select(Document).where(Document.id == document_id).with_for_update()
-    )
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
+    document = await db.scalar(select(Document).where(Document.id == document_id).with_for_update())
     if document is None or document.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="document not found")
     try:
-        await knowledge_base_service.authorize(
+        await knowledge_base_service.authorize_identity(
             db,
-            tenant_id,
-            user_id,
+            identity,
             document.knowledge_base_id,
             required_permission="editor",
         )
@@ -280,20 +276,18 @@ async def reindex_document(
 @router.delete("/{document_id}", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
 async def delete_document(
     document_id: UUID,
-    identity: tuple[str, str] = Depends(request_identity),
+    identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> IngestionJob:
-    tenant_id, user_id = identity
-    document = await db.scalar(
-        select(Document).where(Document.id == document_id).with_for_update()
-    )
+    tenant_id = identity.tenant_id
+    user_id = identity.user_id
+    document = await db.scalar(select(Document).where(Document.id == document_id).with_for_update())
     if document is None or document.tenant_id != tenant_id:
         raise HTTPException(status_code=404, detail="document not found")
     try:
-        await knowledge_base_service.authorize(
+        await knowledge_base_service.authorize_identity(
             db,
-            tenant_id,
-            user_id,
+            identity,
             document.knowledge_base_id,
             required_permission="editor",
         )

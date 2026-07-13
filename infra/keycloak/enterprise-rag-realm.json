@@ -1,0 +1,140 @@
+{
+  "realm": "enterprise-rag",
+  "enabled": true,
+  "displayName": "Enterprise RAG",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "rag-admin",
+        "description": "Enterprise RAG administrator"
+      },
+      {
+        "name": "rag-user",
+        "description": "Enterprise RAG user"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "engineering"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "enterprise-rag-api",
+      "name": "Enterprise RAG API",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "enterprise-rag-web",
+      "name": "Enterprise RAG Web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "http://localhost:8080/*",
+        "http://127.0.0.1:8080/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080"
+      ],
+      "protocolMappers": [
+        {
+          "name": "enterprise-rag-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "enterprise-rag-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "rag-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "RAG",
+      "lastName": "Administrator",
+      "email": "rag-admin@example.local",
+      "attributes": {
+        "tenant_id": ["default"]
+      },
+      "realmRoles": ["rag-admin", "rag-user"],
+      "groups": ["/engineering"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin_change_me",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "rag-user",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "RAG",
+      "lastName": "User",
+      "email": "rag-user@example.local",
+      "attributes": {
+        "tenant_id": ["default"]
+      },
+      "realmRoles": ["rag-user"],
+      "groups": ["/engineering"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "user_change_me",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
