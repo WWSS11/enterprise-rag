@@ -29,6 +29,8 @@ REFUSAL_MARKERS = (
     "未提供",
     "没有包含",
 )
+SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？!?])")
+QUOTED_OR_CODE = re.compile(r"`[^`]*`|“[^”]*”|\"[^\"]*\"|'[^']*'")
 
 
 def normalize_for_matching(value: str) -> str:
@@ -69,11 +71,12 @@ def ranking_metrics(
 def detect_refusal(answer: str, citations: list[dict[str, Any]]) -> bool:
     normalized_answer = normalize_for_matching(answer)
     # Citations may legitimately justify why the available corpus cannot answer.
-    # Only inspect the opening conclusion so a later caveat such as "未提供更多细节"
-    # does not turn an otherwise complete answer into a refusal.
-    opening_paragraph = answer.split("\n\n", 1)[0]
-    normalized_opening = normalize_for_matching(opening_paragraph)
-    refusal_scope = (normalized_opening or normalized_answer)[:180]
+    # Only inspect the first conclusion sentence so a later caveat or an explanation
+    # about phrases such as “无法回答” does not become a full-answer refusal.
+    opening_sentence = SENTENCE_BOUNDARY.split(answer.strip(), maxsplit=1)[0]
+    opening_without_quotes = QUOTED_OR_CODE.sub("", opening_sentence)
+    normalized_opening = normalize_for_matching(opening_without_quotes)
+    refusal_scope = (normalized_opening or normalized_answer)[:120]
     return any(
         normalize_for_matching(marker) in refusal_scope for marker in REFUSAL_MARKERS
     )

@@ -193,6 +193,8 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 
 文档多样性上下文排序的 Control、Naive 与 10% 分数门槛消融，以及项目架构回归结果见 [`docs/evaluation-baselines/context-document-diversity-ablation-2026-07-13.md`](docs/evaluation-baselines/context-document-diversity-ablation-2026-07-13.md)。
 
+拒答检测对“讨论拒答机制”元问题的修复和四个历史运行的无模型重算结果见 [`docs/evaluation-baselines/refusal-detection-recalculation-2026-07-13.md`](docs/evaluation-baselines/refusal-detection-recalculation-2026-07-13.md)。
+
 ## 飞书同步
 
 启用 `APP_FEISHU_ENABLED=true` 后，Celery Beat 每 12 小时触发一次同步。同步流程为：递归读取 Wiki 节点 → 获取 docx/sheet/bitable 内容 → 对比 `source_key` 与更新时间/校验和 → 只排队变化文档 → 为远端消失节点创建删除任务。Redis 分布式锁防止多个 Beat/Worker 重复同步。
@@ -209,6 +211,6 @@ rerank 重试、fallback 与监控验证见 [`docs/evaluation-baselines/project-
 docker compose --env-file .\infra\versions.env --env-file .\infra\.env -f .\infra\compose.yml config --quiet
 ```
 
-当前验证结果：43 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、四轮项目架构基线、一轮独立源码 holdout、上下文多样性消融和一次引用 ground-truth 审计已做端到端验证。
+当前验证结果：46 个测试通过，Ruff、mypy、pip check、Alembic 迁移和 Compose 配置通过。开发模式由本地 `.venv` 运行 API/Worker/Beat，Docker 只运行 PostgreSQL、Redis、Milvus、etcd、MinIO。蓝绿重建、权限授权、目录扫描、任务失败补偿、异步删除、并发任务唯一约束、advisory lock、四轮项目架构基线、一轮独立源码 holdout、上下文多样性消融、拒答规则重算和一次引用 ground-truth 审计已做端到端验证。
 
 模型密钥不属于仓库；本地 `.venv` 开发时填写根目录 `.env`，完整容器部署时填写 `infra/.env`。生产上线还需要接入企业 IdP/密钥管理、外部 Prometheus/Grafana、备份策略、压测与告警，这些是部署环境能力，不应硬编码进本仓库。

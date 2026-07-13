@@ -95,6 +95,54 @@ def test_later_missing_detail_caveat_is_not_a_full_refusal() -> None:
     assert metrics["refusal_correct"] is True
 
 
+def test_later_caveat_in_same_paragraph_is_not_a_full_refusal() -> None:
+    metrics = calculate_case_metrics(
+        answer="系统会保留旧索引并切换新版本。资料未提供界面展示细节。",
+        retrieved=[{"document_id": "expected"}],
+        reranked=[{"document_id": "expected"}],
+        citations=[{"document_id": "expected"}],
+        expected_document_ids=["expected"],
+        required_key_points=["保留旧索引", "切换新版本"],
+        should_refuse=False,
+    )
+
+    assert metrics["actual_refusal"] is False
+    assert metrics["refusal_correct"] is True
+
+
+def test_explaining_refusal_markers_is_not_itself_a_refusal() -> None:
+    metrics = calculate_case_metrics(
+        answer=(
+            "拒答检测只检查答案开头，是为了避免把后文误判为拒答。"
+            "例如系统会识别“无法回答”和`不知道`等标记。"
+        ),
+        retrieved=[{"document_id": "expected"}],
+        reranked=[{"document_id": "expected"}],
+        citations=[{"document_id": "expected"}],
+        expected_document_ids=["expected"],
+        required_key_points=["答案开头", "拒答"],
+        should_refuse=False,
+    )
+
+    assert metrics["actual_refusal"] is False
+    assert metrics["refusal_correct"] is True
+
+
+def test_explicit_refusal_in_first_sentence_is_still_detected() -> None:
+    metrics = calculate_case_metrics(
+        answer="根据当前资料，我无法回答客户订单数量。后续可以导入订单数据。",
+        retrieved=[{"document_id": "context"}],
+        reranked=[{"document_id": "context"}],
+        citations=[{"document_id": "context"}],
+        expected_document_ids=[],
+        required_key_points=[],
+        should_refuse=True,
+    )
+
+    assert metrics["actual_refusal"] is True
+    assert metrics["refusal_correct"] is True
+
+
 def test_case_metrics_record_rerank_fallback() -> None:
     metrics = calculate_case_metrics(
         answer="答案",

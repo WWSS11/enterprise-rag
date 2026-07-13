@@ -59,6 +59,8 @@ Score-aware diversity：`6b2e4f43-c583-4a45-a611-cd2d13880129`
 | 平均首 token | 18,100 ms | 24,050 ms | 18,843 ms |
 | 平均总耗时 | 23,536 ms | 29,383 ms | 24,746 ms |
 
+> 上表的 Refusal Accuracy 是三次运行结束时的原始规则结果。首结论句拒答规则确定性重算后，Control / Naive / Score-aware 分别为 0.9600 / 1.0000 / 1.0000；其他指标不变。详见 [`refusal-detection-recalculation-2026-07-13.md`](refusal-detection-recalculation-2026-07-13.md)。
+
 Retrieval 和 Rerank 指标完全一致，证明实验没有改变召回与排序层。Naive diversity 虽然提高 Citation Recall 和拒答准确率，但 Citation Precision 与关键点覆盖下降，说明无条件提升低分文档会引入噪声。
 
 Score-aware diversity 保留了跨文档召回收益，同时 Citation Precision 和关键点覆盖均高于 Control。本轮 retry rate 不同来自外部 rerank 的瞬时重试，策略本身没有增加网络请求。
