@@ -119,6 +119,7 @@ async def _run_chat(
             "knowledge_base_id": str(context.conversation.knowledge_base_id),
             "retrieved_count": len(result.get("retrieved", [])),
             "reranked_count": len(result.get("reranked", [])),
+            "citation_diagnostics": result.get("citation_diagnostics", {}),
         },
     )
     await conversation_service.append_exchange(
@@ -132,6 +133,7 @@ async def _run_chat(
         metadata={
             "retrieved_count": len(result.get("retrieved", [])),
             "reranked_count": len(result.get("reranked", [])),
+            "citation_diagnostics": result.get("citation_diagnostics", {}),
         },
     )
 
@@ -198,6 +200,9 @@ async def chat_stream(
                     "knowledge_base_id": str(context.conversation.knowledge_base_id),
                     "retrieved_count": len(final_state.get("retrieved", [])),
                     "reranked_count": len(final_state.get("reranked", [])),
+                    "citation_diagnostics": final_state.get(
+                        "citation_diagnostics", {}
+                    ),
                 },
             )
             await conversation_service.append_exchange(
@@ -211,6 +216,9 @@ async def chat_stream(
                     "citations": citations,
                     "retrieved_count": len(final_state.get("retrieved", [])),
                     "reranked_count": len(final_state.get("reranked", [])),
+                    "citation_diagnostics": final_state.get(
+                        "citation_diagnostics", {}
+                    ),
                 },
             )
             yield _sse("done", {"status": "completed"})

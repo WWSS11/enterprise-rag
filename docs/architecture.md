@@ -60,6 +60,8 @@ Milvus 只索引 retrieval chunk，并通过 Dense Vector 与内置 BM25 各召�
 
 生成状态区分 `context_sources` 与 `citations`：前者记录实际送入模型的上下文来源，后者只包含答案文本中明确出现的 `[来源:文件名#chunk-N]`。这避免把“模型看过的资料”误报成“答案实际引用的资料”，也使引用精度评测具有明确语义。
 
+引用策略版本为 `minimal-sufficient-v1`。上下文向模型显式提供证据优先级，并要求每个关键结论就近引用最少充分来源：一个来源足够时不叠加第二个，不为背景代码、检索过程或总结句重复引用。解析器不会在同一文件存在多个候选 chunk 时猜测省略 chunk 编号的标记；无效、歧义、不精确和重复标记分别计入 `citation_diagnostics`，通过聊天 metadata、审计日志和评测结果暴露。评测同时汇总引用标记有效率与更严格的策略合规率，配置快照保存策略版本，使不同 prompt 策略的运行可比较。
+
 外部 rerank 只对 timeout、传输错误、429 和 5xx 进行一次短重试，仍失败则保留 RRF 顺序继续生成。在线 API 通过 Prometheus 暴露 rerank 请求结果、尝试次数和耗时；Celery 评测进程将 `rerank_status`、尝试次数、fallback 原因写入 EvaluationResult，由报告统计跨进程 retry/fallback 比例。
 
 summary chunk 和独立神经 sparse 模型暂不进入当前主索引：它们保留为后续评测证明有增益后再启用的扩展层，避免与 Milvus BM25 重复召回并增加写入、更新和调参成本。

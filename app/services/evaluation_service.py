@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.models import DocumentSection, EvaluationCase, EvaluationResult, EvaluationRun
 from app.db.session import AsyncSessionFactory
-from app.rag.graph import get_rag_graph
+from app.rag.graph import CITATION_POLICY_VERSION, get_rag_graph
 from app.services.chunking_service import truncate_to_tokens
 from app.services.model_provider import validate_rag_configuration
 
@@ -415,6 +415,7 @@ def build_config_snapshot() -> dict[str, Any]:
             settings.context_document_diversity_min_score_ratio
         ),
         "milvus_collection_alias": settings.milvus_collection_alias,
+        "citation_policy_version": CITATION_POLICY_VERSION,
     }
 
 
@@ -463,6 +464,9 @@ async def execute_rag_case(
         required_key_point_groups=case.required_key_point_groups,
         citation_evidence=citation_evidence,
         should_refuse=case.should_refuse,
+    )
+    metrics["citation_diagnostics"] = dict(
+        final_state.get("citation_diagnostics", {})
     )
     return {
         "rewritten_query": str(final_state.get("rewritten_query", case.question)),
@@ -516,6 +520,28 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
         for result in results
         if result.status == "succeeded"
     ]
+    citation_diagnostics = [
+        result.metrics.get("citation_diagnostics", {})
+        for result in results
+        if result.status == "succeeded"
+        and isinstance(result.metrics.get("citation_diagnostics"), dict)
+    ]
+    markers_seen = sum(int(item.get("markers_seen", 0)) for item in citation_diagnostics)
+    compliant_markers = sum(
+        int(item.get("compliant_markers", 0)) for item in citation_diagnostics
+    )
+    invalid_markers = sum(
+        int(item.get("invalid_markers", 0)) for item in citation_diagnostics
+    )
+    ambiguous_markers = sum(
+        int(item.get("ambiguous_markers", 0)) for item in citation_diagnostics
+    )
+    imprecise_markers = sum(
+        int(item.get("imprecise_markers", 0)) for item in citation_diagnostics
+    )
+    duplicate_markers = sum(
+        int(item.get("duplicate_markers", 0)) for item in citation_diagnostics
+    )
     first_token_values = [
         result.first_token_ms
         for result in results
@@ -537,6 +563,26 @@ def summarize_results(results: list[EvaluationResult]) -> dict[str, Any]:
             "rerank_retry_rate": (
                 round(fmean(retry_values), 6) if retry_values else None
             ),
+            "citation_marker_validity_rate": (
+                round(
+                    (markers_seen - invalid_markers - ambiguous_markers)
+                    / markers_seen,
+                    6,
+                )
+                if markers_seen
+                else None
+            ),
+            "citation_duplicate_marker_rate": (
+                round(duplicate_markers / markers_seen, 6) if markers_seen else None
+            ),
+            "citation_policy_compliance_rate": (
+                round(compliant_markers / markers_seen, 6)
+                if markers_seen
+                else None
+            ),
+            "citation_invalid_markers": invalid_markers,
+            "citation_ambiguous_markers": ambiguous_markers,
+            "citation_imprecise_markers": imprecise_markers,
             "average_first_token_ms": (
                 round(fmean(first_token_values), 2) if first_token_values else None
             ),
@@ -579,6 +625,7 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
                     ),
                     max_tokens=int(run.config_snapshot.get("context_max_tokens", 4_000)),
                 )
+            existing_diagnostics = result.metrics.get("citation_diagnostics")
             result.metrics = calculate_case_metrics(
                 answer=result.answer or "",
                 retrieved=result.retrieved_documents,
@@ -593,6 +640,8 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
                 citation_evidence=result.citation_evidence,
                 should_refuse=case.should_refuse,
             )
+            if isinstance(existing_diagnostics, dict):
+                result.metrics["citation_diagnostics"] = existing_diagnostics
         results = [result for result, _ in rows]
         run.summary = summarize_results(results)
         await db.commit()

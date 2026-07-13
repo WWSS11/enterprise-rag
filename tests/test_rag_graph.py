@@ -2,10 +2,13 @@ import pytest
 from langgraph.graph import END, START, StateGraph
 
 from app.rag.graph import (
+    CITATION_POLICY_VERSION,
+    RAG_SYSTEM_PROMPT,
     generate,
     get_rag_graph,
     needs_query_rewrite,
     order_context_candidates,
+    resolve_answer_citations,
     select_answer_citations,
 )
 from app.rag.state import RagState
@@ -89,11 +92,56 @@ def test_select_answer_citations_deduplicates_repeated_markers() -> None:
         "chunk_index": 2,
     }
 
-    citations = select_answer_citations(
+    citations, diagnostics = resolve_answer_citations(
         "[来源:a.md#chunk-2] 再次引用 [来源:a.md#chunk-2]", [candidate]
     )
 
     assert citations == [candidate]
+    assert diagnostics["duplicate_markers"] == 1
+
+
+def test_ambiguous_citation_without_chunk_is_not_guessed() -> None:
+    candidates = [
+        {
+            "document_id": "document-a",
+            "document_name": "a.md",
+            "chunk_id": "chunk-a-1",
+            "chunk_index": 1,
+        },
+        {
+            "document_id": "document-a",
+            "document_name": "a.md",
+            "chunk_id": "chunk-a-2",
+            "chunk_index": 2,
+        },
+    ]
+
+    citations, diagnostics = resolve_answer_citations("结论。[来源:a.md]", candidates)
+
+    assert citations == []
+    assert diagnostics["ambiguous_markers"] == 1
+    assert diagnostics["policy_version"] == CITATION_POLICY_VERSION
+
+
+def test_unique_citation_without_chunk_can_be_resolved() -> None:
+    candidate = {
+        "document_id": "document-a",
+        "document_name": "a.md",
+        "chunk_id": "chunk-a",
+        "chunk_index": 2,
+    }
+
+    citations, diagnostics = resolve_answer_citations("结论。[来源:a.md]", [candidate])
+
+    assert citations == [candidate]
+    assert diagnostics["valid_markers"] == 1
+    assert diagnostics["imprecise_markers"] == 1
+
+
+def test_citation_policy_requires_minimal_precise_sources() -> None:
+    assert "最少来源" in RAG_SYSTEM_PROMPT
+    assert "精确的 chunk 编号" in RAG_SYSTEM_PROMPT
+    assert "不要为背景代码" in RAG_SYSTEM_PROMPT
 
 
 def test_context_candidate_diversity_preserves_first_document_rank() -> None:

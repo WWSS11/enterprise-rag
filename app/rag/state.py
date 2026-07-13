@@ -17,3 +17,4 @@ class RagState(TypedDict, total=False):
     context_sources: list[dict[str, Any]]
     answer: str
     citations: list[dict[str, Any]]
+    citation_diagnostics: dict[str, Any]

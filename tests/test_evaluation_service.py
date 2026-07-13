@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ from app.services.evaluation_service import (
     build_citation_evidence,
     calculate_case_metrics,
     ranking_metrics,
+    summarize_results,
 )
 
 
@@ -296,6 +298,33 @@ def test_citation_evidence_snapshots_expanded_generation_context() -> None:
 
     assert evidence[0]["evidence_content"] == "parent and neighboring section evidence"
     assert evidence[0]["reconstructed"] is False
+
+
+def test_evaluation_summary_aggregates_citation_marker_diagnostics() -> None:
+    result = SimpleNamespace(
+        status="succeeded",
+        metrics={
+            "citation_diagnostics": {
+                "markers_seen": 4,
+                "compliant_markers": 1,
+                "invalid_markers": 1,
+                "ambiguous_markers": 1,
+                "imprecise_markers": 0,
+                "duplicate_markers": 1,
+            }
+        },
+        first_token_ms=None,
+        total_latency_ms=None,
+    )
+
+    summary = summarize_results([result])
+
+    assert summary["citation_marker_validity_rate"] == 0.5
+    assert summary["citation_duplicate_marker_rate"] == 0.25
+    assert summary["citation_policy_compliance_rate"] == 0.25
+    assert summary["citation_invalid_markers"] == 1
+    assert summary["citation_ambiguous_markers"] == 1
+    assert summary["citation_imprecise_markers"] == 0
 
 
 def test_evaluation_case_ground_truth_validation() -> None:
