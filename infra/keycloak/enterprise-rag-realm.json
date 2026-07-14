@@ -92,7 +92,10 @@
             "introspection.token.claim": "true"
           }
         }
-      ]
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://127.0.0.1:3000/*##http://localhost:8080/*##http://127.0.0.1:8080/*"
+      }
     }
   ],
   "users": [
@@ -104,10 +107,17 @@
       "lastName": "Administrator",
       "email": "rag-admin@example.local",
       "attributes": {
-        "tenant_id": ["default"]
+        "tenant_id": [
+          "default"
+        ]
       },
-      "realmRoles": ["rag-admin", "rag-user"],
-      "groups": ["/engineering"],
+      "realmRoles": [
+        "rag-admin",
+        "rag-user"
+      ],
+      "groups": [
+        "/engineering"
+      ],
       "credentials": [
         {
           "type": "password",
@@ -124,10 +134,16 @@
       "lastName": "User",
       "email": "rag-user@example.local",
       "attributes": {
-        "tenant_id": ["default"]
+        "tenant_id": [
+          "default"
+        ]
       },
-      "realmRoles": ["rag-user"],
-      "groups": ["/engineering"],
+      "realmRoles": [
+        "rag-user"
+      ],
+      "groups": [
+        "/engineering"
+      ],
       "credentials": [
         {
           "type": "password",
