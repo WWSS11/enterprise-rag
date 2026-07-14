@@ -19,3 +19,12 @@ coverage.xml
 .DS_Store
 data/
 infra/volumes/
+
+# Local AI/design tooling
+/.agents/
+/.claude/
+/.impeccable/config.local.json
+/.impeccable/hook.cache.json
+/.impeccable/critique/
+/package-lock.json
+/skills-lock.json

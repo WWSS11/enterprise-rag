@@ -1,0 +1,278 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-14T11:42:16+08:00",
+  "title": "Design System: RAG Study Helper Enterprise",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Operational Cobalt",
+        "canonical": "oklch(0.42 0.11 247)",
+        "tonalRamp": [
+          "oklch(0.22 0.08 247)",
+          "oklch(0.32 0.11 247)",
+          "oklch(0.36 0.12 247)",
+          "oklch(0.42 0.11 247)",
+          "oklch(0.5 0.12 247)",
+          "oklch(0.7 0.06 247)",
+          "oklch(0.88 0.03 247)",
+          "oklch(0.95 0.02 247)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Cool Canvas",
+        "canonical": "oklch(0.995 0.003 247)",
+        "tonalRamp": [
+          "oklch(0.24 0.02 247)",
+          "oklch(0.4 0.02 247)",
+          "oklch(0.48 0.018 247)",
+          "oklch(0.78 0.016 247)",
+          "oklch(0.88 0.012 247)",
+          "oklch(0.975 0.01 247)",
+          "oklch(0.985 0.006 247)",
+          "oklch(0.995 0.003 247)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Cool Ink",
+        "canonical": "oklch(0.24 0.02 247)",
+        "tonalRamp": [
+          "oklch(0.18 0.02 247)",
+          "oklch(0.24 0.02 247)",
+          "oklch(0.32 0.02 247)",
+          "oklch(0.4 0.02 247)",
+          "oklch(0.48 0.018 247)",
+          "oklch(0.62 0.015 247)",
+          "oklch(0.78 0.012 247)",
+          "oklch(0.92 0.008 247)"
+        ]
+      },
+      "success": {
+        "role": "status",
+        "displayName": "Operational Success",
+        "canonical": "oklch(0.48 0.11 155)",
+        "tonalRamp": [
+          "oklch(0.28 0.08 155)",
+          "oklch(0.38 0.1 155)",
+          "oklch(0.48 0.11 155)",
+          "oklch(0.58 0.09 155)",
+          "oklch(0.72 0.06 155)",
+          "oklch(0.85 0.04 155)",
+          "oklch(0.92 0.03 155)",
+          "oklch(0.95 0.03 155)"
+        ]
+      },
+      "danger": {
+        "role": "status",
+        "displayName": "Operational Danger",
+        "canonical": "oklch(0.5 0.15 25)",
+        "tonalRamp": [
+          "oklch(0.3 0.12 25)",
+          "oklch(0.4 0.14 25)",
+          "oklch(0.5 0.15 25)",
+          "oklch(0.62 0.12 25)",
+          "oklch(0.75 0.08 25)",
+          "oklch(0.88 0.05 25)",
+          "oklch(0.93 0.04 25)",
+          "oklch(0.95 0.03 25)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page titles (h1); fixed rem, semibold."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section titles (h2)."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "UI body and empty-state prose; max ~70ch."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Nav, buttons, form labels, meta chips."
+      },
+      "mono": {
+        "displayName": "Mono / Evidence",
+        "purpose": "IDs, request_id, claim values, metrics — never Chinese body."
+      }
+    },
+    "shadows": [
+      {
+        "name": "menu",
+        "value": "0 4px 16px oklch(0.24 0.02 247 / 0.1)",
+        "purpose": "User menu and floating dropdowns only."
+      },
+      {
+        "name": "float",
+        "value": "0 8px 24px oklch(0.24 0.02 247 / 0.12)",
+        "purpose": "Higher floating surfaces (toast/dialog reserved)."
+      }
+    ],
+    "motion": [
+      {
+        "name": "duration-fast",
+        "value": "150ms",
+        "purpose": "Hover/color state changes."
+      },
+      {
+        "name": "duration-base",
+        "value": "200ms",
+        "purpose": "Sidebar collapse and structural transitions."
+      },
+      {
+        "name": "duration-slow",
+        "value": "250ms",
+        "purpose": "Upper bound for product motion."
+      },
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Default product easing (ease-out expo-like)."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "shell-collapse",
+        "value": "900px",
+        "purpose": "Below this, sidebar becomes mobile drawer."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action — cobalt fill, on-primary text, 6px radius.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">使用企业账号登录</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:2.25rem; padding:0 0.75rem; border:1px solid transparent; border-radius:6px; background:oklch(0.42 0.11 247); color:oklch(0.99 0.005 247); font:500 0.8125rem/1 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; transition:background-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary:hover { background:oklch(0.36 0.12 247); } .ds-btn-primary:focus-visible { outline:2px solid oklch(0.5 0.12 247); outline-offset:2px; } .ds-btn-primary:disabled { opacity:0.55; cursor:not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary action — raised surface with structural border.",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">返回</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; justify-content:center; min-height:2.25rem; padding:0 0.75rem; border:1px solid oklch(0.88 0.012 247); border-radius:6px; background:oklch(1 0 0); color:oklch(0.24 0.02 247); font:500 0.8125rem/1 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; transition:background-color 150ms cubic-bezier(0.16,1,0.3,1), border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-secondary:hover { border-color:oklch(0.78 0.016 247); background:oklch(0.985 0.006 247); } .ds-btn-secondary:focus-visible { outline:2px solid oklch(0.5 0.12 247); outline-offset:2px; }"
+    },
+    {
+      "name": "Nav Link Active",
+      "kind": "nav",
+      "refersTo": "nav-link-active",
+      "description": "Selected primary nav item with soft cobalt fill.",
+      "html": "<a class=\"ds-nav-active\" href=\"#\">智能问答</a>",
+      "css": ".ds-nav-active { display:flex; align-items:center; gap:0.75rem; min-height:2.25rem; padding:0 0.5rem; border-radius:6px; background:oklch(0.95 0.02 247); color:oklch(0.42 0.11 247); font:500 0.8125rem/1.35 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; text-decoration:none; } .ds-nav-active:focus-visible { outline:2px solid oklch(0.5 0.12 247); outline-offset:2px; }"
+    },
+    {
+      "name": "Status Pill OK",
+      "kind": "chip",
+      "refersTo": "status-pill",
+      "description": "Operational status with color-blind marker + label.",
+      "html": "<span class=\"ds-pill-ok\" role=\"status\"><span aria-hidden=\"true\">●</span><span>API 运行正常</span></span>",
+      "css": ".ds-pill-ok { display:inline-flex; align-items:center; gap:0.5rem; min-height:1.5rem; padding:0 0.5rem; border-radius:999px; border:1px solid oklch(0.48 0.11 155 / 0.25); background:oklch(0.95 0.03 155); color:oklch(0.48 0.11 155); font:500 0.75rem/1 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; } .ds-pill-ok span:last-child { color:oklch(0.24 0.02 247); }"
+    },
+    {
+      "name": "Empty State Panel",
+      "kind": "card",
+      "refersTo": "empty-panel",
+      "description": "Honest empty route shell — no vanity metrics.",
+      "html": "<section class=\"ds-empty\"><div class=\"ds-kicker\">主工作区</div><h1>智能问答</h1><p>面向租户知识库的流式问答将在此完成。</p></section>",
+      "css": ".ds-empty { border:1px solid oklch(0.88 0.012 247); border-radius:8px; background:oklch(1 0 0); padding:1.25rem; color:oklch(0.24 0.02 247); font:400 0.875rem/1.5 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; max-width:72rem; } .ds-empty h1 { margin:0 0 0.5rem; font-size:1.125rem; font-weight:600; line-height:1.25; } .ds-empty p { margin:0; color:oklch(0.4 0.02 247); max-width:70ch; } .ds-kicker { font-size:0.75rem; font-weight:500; color:oklch(0.48 0.018 247); margin-bottom:0.5rem; }"
+    },
+    {
+      "name": "Language Option Selected",
+      "kind": "chip",
+      "refersTo": "language-option-selected",
+      "description": "Selected language chip without flags.",
+      "html": "<button class=\"ds-lang-selected\" type=\"button\" aria-current=\"true\">中文</button>",
+      "css": ".ds-lang-selected { min-height:1.75rem; padding:0 0.5rem; border:0; border-radius:4px; background:oklch(0.95 0.02 247); color:oklch(0.42 0.11 247); box-shadow:inset 0 0 0 1px oklch(0.5 0.12 247 / 0.25); font:500 0.75rem/1 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; } .ds-lang-selected:focus-visible { outline:2px solid oklch(0.5 0.12 247); outline-offset:2px; }"
+    },
+    {
+      "name": "Mono Request ID",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Audit-grade request_id display with copy action.",
+      "html": "<div class=\"ds-req\"><span class=\"ds-req-label\">request_id</span><code class=\"ds-req-value\">abc-123</code><button class=\"ds-req-copy\" type=\"button\">复制</button></div>",
+      "css": ".ds-req { display:inline-flex; align-items:center; gap:0.5rem; max-width:100%; padding:0.25rem 0.5rem; border:1px solid oklch(0.88 0.012 247); border-radius:6px; background:oklch(0.985 0.006 247); } .ds-req-label { font:500 0.75rem/1 \"IBM Plex Sans\", sans-serif; color:oklch(0.48 0.018 247); } .ds-req-value { font:400 0.75rem/1 \"IBM Plex Mono\", monospace; color:oklch(0.24 0.02 247); font-variant-numeric:tabular-nums; } .ds-req-copy { border:0; background:transparent; color:oklch(0.42 0.11 247); font:500 0.75rem/1 \"IBM Plex Sans\", \"Noto Sans SC\", sans-serif; padding:0.25rem; border-radius:4px; } .ds-req-copy:hover { background:oklch(0.95 0.02 247); } .ds-req-copy:focus-visible { outline:2px solid oklch(0.5 0.12 247); outline-offset:2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Evidence Desk",
+    "overview": "Source of truth: frontend/src/styles/tokens.css plus CSS Modules under frontend/src/components and frontend/src/layouts. Desktop-first product UI for enterprise RAG operations. Aesthetic strategy is Restrained: cool-tinted neutrals carry almost all surface area; one cobalt primary marks primary action, selection, and focus only. Motion is state-only (150–250ms). Typography is IBM Plex Sans (plus CJK fallbacks) for chrome and IBM Plex Mono for audit-grade facts. Locales are zh-CN / en-US.",
+    "keyCharacteristics": [
+      "Evidence inspectability over decorative polish",
+      "Cool operational cobalt accent ≤10% of any screen",
+      "Sans UI + mono only for IDs, metrics, and technical evidence",
+      "Flat-by-default elevation; 1px borders and tonal layers",
+      "State-only motion with prefers-reduced-motion hard override",
+      "Bilingual product strings; never monospace Chinese body copy"
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "Primary cobalt occupies ≤10% of any screen. Rarity signals actionability.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status Is Not Brand Rule",
+        "body": "Success/warning/danger/info appear only for real operational state — never as decorative chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The Cool Canvas Rule",
+        "body": "Body background stays near-white with tiny chroma toward hue 247. Cream/sand/beige body tints are prohibited.",
+        "section": "colors"
+      },
+      {
+        "name": "The Evidence Mono Rule",
+        "body": "Anything copyable into a ticket or audit trail renders in mono with tabular nums.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Display Font Rule",
+        "body": "No display serifs, scripts, or gradient text in product UI.",
+        "section": "typography"
+      },
+      {
+        "name": "The CJK Body Rule",
+        "body": "Chinese product copy uses the sans stack; never force mono on Chinese body text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Non-floating surfaces never cast a shadow. Cards are not elevated for decoration.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do lead with evidence, status, and request_id over decorative empty theater.",
+      "Do keep primary cobalt rare (≤10%) for action/selection/focus only.",
+      "Do use IBM Plex Sans (+ CJK fallbacks) for UI and IBM Plex Mono only for audit facts.",
+      "Do design desktop density first; collapse sidebar structurally under ~900px.",
+      "Do use 150–250ms state transitions with ease-out.",
+      "Do pair status color with shape/label markers (● ▲ ■ …).",
+      "Do keep document.documentElement.lang in sync with zh-CN / en-US.",
+      "Do preserve server error detail under technical details while localizing titles/actions."
+    ],
+    "donts": [
+      "Don't use purple-blue “AI product” gradients.",
+      "Don't use neon glow, cyan-on-dark sci-fi chrome, or decorative glassmorphism.",
+      "Don't ship full-screen grids of identical rounded cards or nested cards.",
+      "Don't invent hero metrics / vanity dashboards without operational meaning.",
+      "Don't use chatbot-toy aesthetics or mascot-led AI UI.",
+      "Don't over-animate or choreograph page-load sequences.",
+      "Don't ship default shadcn/template SaaS sameness with no product voice.",
+      "Don't use side-stripe borders as accent decoration.",
+      "Don't use gradient text.",
+      "Don't use cream/sand/beige body backgrounds as a warm professional default.",
+      "Don't store access tokens in localStorage (locale preference key only: evidence-desk:locale).",
+      "Don't put Chinese body copy in monospace."
+    ]
+  }
+}

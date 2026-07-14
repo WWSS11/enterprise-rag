@@ -1,0 +1,40 @@
+export const authZh = {
+  loginTitle: "Evidence Desk",
+  loginLead:
+    "使用企业身份登录，访问智能问答、知识库、任务与质量评测。回答可核查；授权以 API 身份接口为准。",
+  connection: "连接信息",
+  authority: "颁发方",
+  client: "客户端",
+  api: "API",
+  flow: "流程",
+  flowValue: "Authorization Code + PKCE",
+  continueSso: "使用企业账号登录",
+  redirectingIdp: "正在跳转到身份提供方…",
+  loginNote: "浏览器不使用密码授权。访问令牌不写入 localStorage，也不会被记录。",
+  checkingSession: "正在检查会话…",
+  completingSignIn: "正在完成登录…",
+  renewingSession: "正在续期会话…",
+  restoringSession: "正在恢复会话…",
+  signInIncompleteTitle: "登录未完成",
+  signInIncompleteBody:
+    "身份提供方已回到应用，但授权码未能完成交换。未记录任何令牌。",
+  signInFailed: "无法开始登录。",
+  backToSignIn: "返回登录",
+  identityUnavailableTitle: "身份不可用",
+  identityUnavailableBody:
+    "身份提供方登录已成功，但应用无法加载 GET /api/v1/auth/me。界面以该接口作为授权来源，而非原始 JWT 声明。",
+  identityLoadFailed: "无法从 API 加载身份。",
+  retryIdentity: "重试加载身份",
+  tenant: "租户",
+  user: "用户",
+  roles: "角色",
+  groups: "用户组",
+  authMethod: "认证方式",
+  access: "权限",
+  admin: "管理员",
+  roleAdmin: "管理员",
+  roleUser: "普通用户",
+  roleUnknown: "角色 {{role}}",
+} as const;
+
+export type AuthDict = { readonly [K in keyof typeof authZh]: string };

@@ -1,0 +1,245 @@
+/**
+ * The Evidence Desk palette.
+ * Mood: high-altitude operations desk at dawn — cold instruments, calm ink, one cobalt signal.
+ * Strategy: Restrained. Accent ≤10%. No cream/sand body. Pure cool-neutral canvas.
+ */
+
+:root {
+  /* Brand */
+  --color-primary: oklch(0.42 0.11 247);
+  --color-primary-hover: oklch(0.36 0.12 247);
+  --color-primary-active: oklch(0.32 0.11 247);
+  --color-primary-soft: oklch(0.95 0.02 247);
+  --color-on-primary: oklch(0.99 0.005 247);
+
+  /* Neutrals — pure cool canvas, tiny chroma toward primary hue */
+  --color-bg: oklch(0.995 0.003 247);
+  --color-surface: oklch(0.985 0.006 247);
+  --color-surface-raised: oklch(1 0 0);
+  --color-sidebar: oklch(0.975 0.01 247);
+  --color-ink: oklch(0.24 0.02 247);
+  --color-ink-secondary: oklch(0.4 0.02 247);
+  --color-ink-muted: oklch(0.48 0.018 247);
+  --color-border: oklch(0.88 0.012 247);
+  --color-border-strong: oklch(0.78 0.016 247);
+  --color-focus: oklch(0.5 0.12 247);
+
+  /* Status — operational only; always pair with label/shape */
+  --color-success: oklch(0.48 0.11 155);
+  --color-success-soft: oklch(0.95 0.03 155);
+  --color-warning: oklch(0.58 0.12 75);
+  --color-warning-soft: oklch(0.96 0.04 85);
+  --color-danger: oklch(0.5 0.15 25);
+  --color-danger-soft: oklch(0.95 0.03 25);
+  --color-on-danger: oklch(0.99 0.01 25);
+  --color-info: oklch(0.5 0.08 230);
+  --color-info-soft: oklch(0.95 0.025 230);
+
+  /* Typography */
+  --font-sans: "IBM Plex Sans", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+
+  --text-xs: 0.75rem; /* 12 */
+  --text-sm: 0.8125rem; /* 13 */
+  --text-md: 0.875rem; /* 14 */
+  --text-lg: 1rem; /* 16 */
+  --text-xl: 1.125rem; /* 18 */
+  --text-2xl: 1.375rem; /* 22 */
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-prose: 1.65;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Radius — modest, product-familiar */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 999px;
+
+  /* Elevation — flat by default; floating only */
+  --shadow-float: 0 8px 24px oklch(0.24 0.02 247 / 0.12);
+  --shadow-menu: 0 4px 16px oklch(0.24 0.02 247 / 0.1);
+
+  /* Motion — state only */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 250ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Layout */
+  --sidebar-width: 15.5rem;
+  --sidebar-collapsed-width: 4.25rem;
+  --header-height: 3.25rem;
+  --content-max: 72rem;
+  --prose-max: 70ch;
+
+  /* Z-index scale */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-sidebar: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html,
+body {
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  color: var(--color-ink);
+  background: var(--color-bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-wrap: balance;
+  color: var(--color-ink);
+}
+
+h1 {
+  font-size: var(--text-2xl);
+}
+
+h2 {
+  font-size: var(--text-xl);
+}
+
+h3 {
+  font-size: var(--text-lg);
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  color: var(--color-primary-hover);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-primary-soft);
+  color: var(--color-ink);
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--space-3);
+  top: 0;
+  z-index: var(--z-tooltip);
+  transform: translateY(-120%);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-ink);
+  color: var(--color-on-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.skip-link:focus {
+  transform: translateY(var(--space-3));
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

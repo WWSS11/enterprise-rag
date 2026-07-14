@@ -1,0 +1,56 @@
+import type { NavigationDict } from "../zh-CN/navigation";
+
+export const navigationEn = {
+  primaryNav: "Primary",
+  application: "Application",
+  navigation: "Navigation",
+  openNavigation: "Open navigation",
+  closeNavigation: "Close navigation",
+  collapseSidebar: "Collapse sidebar",
+  expandSidebar: "Expand sidebar",
+  collapse: "Collapse",
+  expand: "Expand",
+  sessionContext: "Session context",
+  comingSoon: "Coming soon",
+  chat: "Chat",
+  knowledgeBases: "Knowledge bases",
+  documents: "Documents",
+  evaluations: "Evaluations",
+  jobs: "Jobs",
+  system: "System",
+  chatKicker: "Primary workspace",
+  chatDescription:
+    "Chat will answer from enterprise knowledge bases with inspectable citations. Sign-in and navigation are ready; the conversation UI is not shipped yet — no fabricated threads.",
+  chatStep1: "Confirm your tenant session and API health",
+  chatStep2: "Prepare knowledge bases you can access",
+  chatStep3: "Start grounded Q&A here once chat ships",
+  chatNote:
+    "Honest empty state: chat is not implemented. Check system status or open knowledge bases next.",
+  chatCtaSystem: "View system status",
+  chatCtaKnowledgeBases: "View knowledge bases",
+  kbKicker: "Knowledge ops",
+  kbDescription:
+    "Create knowledge bases, set tenant vs restricted visibility, and manage user/group members. No sample bases are invented here.",
+  kbStep1: "Confirm which bases you can manage",
+  kbStep2: "Plan members and group grants for restricted bases",
+  kbStep3: "Later, manage documents and evaluations from a base",
+  kbNote: "Management UI is not shipped yet; the route stays available for upcoming work.",
+  docsKicker: "Ingestion",
+  docsDescription:
+    "Upload, reindex, and delete documents and track processing status. This page does not show fake documents or progress.",
+  docsStep1: "Prepare enterprise documents to ingest",
+  docsStep2: "Watch parse and embedding completion",
+  docsStep3: "Update or remove content with full auditability",
+  evalsKicker: "Quality loop",
+  evalsDescription:
+    "Manage evaluation sets, compare runs, and quality gates to close the answer → evidence → eval loop. No vanity metrics without real runs.",
+  evalsStep1: "Prepare standard Q&A bound to a knowledge base",
+  evalsStep2: "Review per-case results after a run",
+  evalsStep3: "Compare candidate vs baseline and read gate failures",
+  jobsKicker: "Async work",
+  jobsDescription:
+    "Track real status for ingest, rebuild, delete, and evaluation jobs — not simulated queues.",
+  jobsStep1: "Return here after document or evaluation actions",
+  jobsStep2: "Read failure detail and request_id for support",
+  jobsStep3: "High-risk rebuild actions stay admin-gated",
+} as const satisfies NavigationDict;
