@@ -23,7 +23,18 @@ export {
 } from "./localeStorage";
 
 export const defaultNS = "common" as const;
-export const ns = ["common", "auth", "navigation", "system", "errors", "chat", "evidence"] as const;
+export const ns = [
+  "common",
+  "auth",
+  "navigation",
+  "system",
+  "errors",
+  "chat",
+  "evidence",
+  "knowledgeBases",
+  "documents",
+  "jobs",
+] as const;
 
 void i18n.use(initReactI18next).init({
   resources: {

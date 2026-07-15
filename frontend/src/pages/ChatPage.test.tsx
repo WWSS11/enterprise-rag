@@ -11,28 +11,31 @@ import { changeAppLocale } from "@/i18n";
 import { renderWithI18n, resetI18n } from "@/test/i18nTestUtils";
 
 const kbId = "11111111-1111-4111-8111-111111111111";
+const nonDefaultKbId = "44444444-4444-4444-8444-444444444444";
 const conversationId = "22222222-2222-4222-8222-222222222222";
 const staleConversationId = "33333333-3333-4333-8333-333333333333";
 
-function knowledgeBasesResponse(): Response {
-  return new Response(
-    JSON.stringify([
-      {
-        id: kbId,
-        tenant_id: "default",
-        slug: "policy",
-        name: "Policy KB",
-        description: null,
-        access_mode: "tenant",
-        status: "active",
-        is_default: true,
-        created_by: "user-1",
-        created_at: "2026-07-14T00:00:00Z",
-        updated_at: "2026-07-14T00:00:00Z",
-      },
-    ]),
-    { status: 200, headers: { "Content-Type": "application/json" } },
-  );
+function knowledgeBasesResponse(
+  records: Array<Record<string, unknown>> = [
+    {
+      id: kbId,
+      tenant_id: "default",
+      slug: "policy",
+      name: "Policy KB",
+      description: null,
+      access_mode: "tenant",
+      status: "active",
+      is_default: true,
+      created_by: "user-1",
+      created_at: "2026-07-14T00:00:00Z",
+      updated_at: "2026-07-14T00:00:00Z",
+    },
+  ],
+): Response {
+  return new Response(JSON.stringify(records), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 function sseResponse(body: string): Response {
@@ -110,14 +113,14 @@ function authValue(fetchImpl: typeof fetch): AuthContextValue {
   };
 }
 
-function renderChat(fetchImpl?: typeof fetch) {
+function renderChat(fetchImpl?: typeof fetch, route = "/") {
   const resolvedFetch =
     fetchImpl ?? (async () => knowledgeBasesResponse()) as unknown as typeof fetch;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderWithI18n(
     <QueryClientProvider client={client}>
       <AuthContext.Provider value={authValue(resolvedFetch)}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[route]}>
           <ChatPage />
         </MemoryRouter>
       </AuthContext.Provider>
@@ -152,6 +155,61 @@ describe("ChatPage", () => {
     });
     await screen.findByRole("heading", { name: "Chat" });
     expect(screen.getByLabelText("Question")).toHaveValue("政策是什么？");
+  });
+
+  it("selects a listed non-default knowledge base from the URL parameter", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const listedKnowledgeBases = [
+      {
+        id: kbId,
+        tenant_id: "default",
+        slug: "policy",
+        name: "Policy KB",
+        description: null,
+        access_mode: "tenant",
+        status: "active",
+        is_default: true,
+        created_by: "user-1",
+        created_at: "2026-07-14T00:00:00Z",
+        updated_at: "2026-07-14T00:00:00Z",
+      },
+      {
+        id: nonDefaultKbId,
+        tenant_id: "default",
+        slug: "security",
+        name: "Security KB",
+        description: "Security policy",
+        access_mode: "restricted",
+        status: "active",
+        is_default: false,
+        created_by: "owner-2",
+        created_at: "2026-07-15T00:00:00Z",
+        updated_at: "2026-07-15T00:00:00Z",
+      },
+    ];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/api/v1/knowledge-bases")) {
+        return knowledgeBasesResponse(listedKnowledgeBases);
+      }
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return sseResponse(completedStream());
+    }) as unknown as typeof fetch;
+    renderChat(fetchImpl, `/?knowledge_base_id=${nonDefaultKbId}`);
+
+    await screen.findByRole("option", { name: "Security KB" });
+    await waitFor(() => expect(screen.getByLabelText("知识库")).toHaveValue(nonDefaultKbId));
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("问题"), "安全制度是什么？");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(await screen.findByText("回答已完成")).toBeVisible();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      question: "安全制度是什么？",
+      knowledge_base_id: nonDefaultKbId,
+      conversation_id: null,
+    });
   });
 
   it("streams backend stages, metadata, citations, copy, and session continuity", async () => {

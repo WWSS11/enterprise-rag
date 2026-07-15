@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
@@ -93,6 +93,9 @@ function isAbortError(error: unknown): boolean {
 export function ChatPage() {
   const { t } = useTranslation(["chat", "evidence", "common"]);
   const { api } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedKnowledgeBaseId = searchParams.get("knowledge_base_id");
+  const appliedKnowledgeBaseParam = useRef<string | null>(null);
   const [activeController, setActiveController] = useState<AbortController | null>(null);
   const [status, setStatus] = useState<RunStatus>("idle");
   const [completionKind, setCompletionKind] = useState<CompletionKind>(null);
@@ -128,12 +131,28 @@ export function ChatPage() {
   const selectedKnowledgeBaseId = useWatch({ control, name: "knowledgeBaseId" });
 
   useEffect(() => {
-    if (!knowledgeBases.data?.length || selectedKnowledgeBaseId) return;
+    if (!knowledgeBases.data?.length) return;
+    if (
+      requestedKnowledgeBaseId &&
+      appliedKnowledgeBaseParam.current !== requestedKnowledgeBaseId
+    ) {
+      appliedKnowledgeBaseParam.current = requestedKnowledgeBaseId;
+      if (knowledgeBases.data.some((item) => item.id === requestedKnowledgeBaseId)) {
+        setValue("knowledgeBaseId", requestedKnowledgeBaseId, { shouldValidate: true });
+        return;
+      }
+    }
+    if (selectedKnowledgeBaseId) return;
     const preferred =
       knowledgeBases.data.find((knowledgeBase) => knowledgeBase.is_default) ??
       knowledgeBases.data[0];
     setValue("knowledgeBaseId", preferred.id, { shouldValidate: true });
-  }, [knowledgeBases.data, selectedKnowledgeBaseId, setValue]);
+  }, [
+    knowledgeBases.data,
+    requestedKnowledgeBaseId,
+    selectedKnowledgeBaseId,
+    setValue,
+  ]);
 
   useEffect(
     () => () => {
