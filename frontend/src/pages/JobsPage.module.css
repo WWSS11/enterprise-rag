@@ -1,0 +1,35 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.pageHeader p {
+  max-width: var(--prose-max);
+  margin-top: var(--space-2);
+  color: var(--color-ink-secondary);
+}
+
+.kicker {
+  margin-bottom: var(--space-2);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.scope {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}

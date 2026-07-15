@@ -5,6 +5,9 @@ import { systemZh, type SystemDict } from "./system";
 import { errorsZh, type ErrorsDict } from "./errors";
 import { chatZh, type ChatDict } from "./chat";
 import { evidenceZh, type EvidenceDict } from "./evidence";
+import { knowledgeBasesZh, type KnowledgeBasesDict } from "./knowledgeBases";
+import { documentsZh, type DocumentsDict } from "./documents";
+import { jobsZh, type JobsDict } from "./jobs";
 
 export const zhCN = {
   common: commonZh,
@@ -14,6 +17,9 @@ export const zhCN = {
   errors: errorsZh,
   chat: chatZh,
   evidence: evidenceZh,
+  knowledgeBases: knowledgeBasesZh,
+  documents: documentsZh,
+  jobs: jobsZh,
 } as const;
 
 export type AppResources = {
@@ -24,4 +30,7 @@ export type AppResources = {
   errors: ErrorsDict;
   chat: ChatDict;
   evidence: EvidenceDict;
+  knowledgeBases: KnowledgeBasesDict;
+  documents: DocumentsDict;
+  jobs: JobsDict;
 };

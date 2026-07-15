@@ -1,0 +1,30 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid oklch(0.5 0.15 25 / 0.25);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.copy h2 {
+  font-size: var(--text-lg);
+}
+
+.copy p {
+  color: var(--color-ink-secondary);
+  line-height: var(--leading-normal);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

@@ -6,21 +6,37 @@ import {
   currentIdentitySchema,
   healthResponseSchema,
   knowledgeBaseListSchema,
+  knowledgeBaseSchema,
+  knowledgeBaseCreateSchema,
+  documentListSchema,
+  documentUploadAcceptedSchema,
+  jobSchema,
   chatRequestSchema,
   type CurrentIdentity,
   type HealthResponse,
   type KnowledgeBase,
+  type KnowledgeBaseCreate,
+  type DocumentRecord,
+  type DocumentUploadAccepted,
+  type Job,
   type ChatRequest,
 } from "./types";
 
 export type AccessTokenProvider = () => Promise<string | null>;
 export type TokenRenewer = () => Promise<string | null>;
 
+export type UploadProgress = {
+  loaded: number;
+  total: number;
+  percent: number;
+};
+
 export type ApiClientOptions = {
   baseUrl?: string;
   getAccessToken: AccessTokenProvider;
   renewAccessToken: TokenRenewer;
   fetchImpl?: typeof fetch;
+  xhrFactory?: () => XMLHttpRequest;
 };
 
 function joinUrl(base: string, path: string): string {
@@ -32,6 +48,7 @@ function joinUrl(base: string, path: string): string {
 export function createApiClient(options: ApiClientOptions) {
   const baseUrl = options.baseUrl ?? config.apiBaseUrl;
   const fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
+  const xhrFactory = options.xhrFactory ?? (() => new XMLHttpRequest());
 
   async function request<T>(
     path: string,
@@ -95,6 +112,103 @@ export function createApiClient(options: ApiClientOptions) {
 
     const data: unknown = await response.json();
     return parse(data);
+  }
+
+  async function uploadDocument(
+    file: File,
+    knowledgeBaseId: string,
+    onProgress: (progress: UploadProgress) => void,
+    signal: AbortSignal,
+  ): Promise<DocumentUploadAccepted> {
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+    const token = await options.getAccessToken();
+    if (!token) {
+      throw new ApiError(
+        401,
+        {
+          type: "about:blank",
+          title: "Unauthorized",
+          status: 401,
+          detail: "No access token available. Sign in again.",
+        },
+        null,
+      );
+    }
+
+    const execute = (accessToken: string, allowRenew: boolean): Promise<DocumentUploadAccepted> =>
+      new Promise((resolve, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+
+        const xhr = xhrFactory();
+        const abort = () => xhr.abort();
+        const cleanup = () => signal.removeEventListener("abort", abort);
+        signal.addEventListener("abort", abort, { once: true });
+
+        xhr.open("POST", joinUrl(baseUrl, "/api/v1/documents"));
+        xhr.setRequestHeader("Accept", "application/json");
+        xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+        xhr.upload.onprogress = (event) => {
+          const total = event.lengthComputable && event.total > 0 ? event.total : file.size;
+          const percent = total > 0 ? Math.min(100, Math.round((event.loaded / total) * 100)) : 0;
+          onProgress({ loaded: event.loaded, total, percent });
+        };
+        xhr.onerror = () => {
+          cleanup();
+          reject(new Error("Document upload failed due to a network error."));
+        };
+        xhr.onabort = () => {
+          cleanup();
+          reject(new DOMException("Aborted", "AbortError"));
+        };
+        xhr.onload = () => {
+          cleanup();
+          void (async () => {
+            if (xhr.status === 401 && allowRenew) {
+              const renewed = await options.renewAccessToken();
+              if (renewed) {
+                execute(renewed, false).then(resolve, reject);
+                return;
+              }
+            }
+
+            if (xhr.status < 200 || xhr.status >= 300) {
+              const headers = new Headers({
+                "Content-Type": xhr.getResponseHeader("Content-Type") ?? "application/json",
+              });
+              const requestId = xhr.getResponseHeader("x-request-id");
+              const retryAfter = xhr.getResponseHeader("Retry-After");
+              if (requestId) headers.set("x-request-id", requestId);
+              if (retryAfter) headers.set("Retry-After", retryAfter);
+              const response = new Response(xhr.responseText || null, {
+                status: xhr.status,
+                statusText: xhr.statusText,
+                headers,
+              });
+              const parsed = await parseProblemDetails(response);
+              reject(new ApiError(xhr.status, parsed.problem, parsed.requestId, retryAfter));
+              return;
+            }
+
+            try {
+              const data: unknown = JSON.parse(xhr.responseText);
+              onProgress({ loaded: file.size, total: file.size, percent: 100 });
+              resolve(documentUploadAcceptedSchema.parse(data));
+            } catch (error) {
+              reject(error);
+            }
+          })();
+        };
+
+        const body = new FormData();
+        body.append("file", file);
+        body.append("knowledge_base_id", knowledgeBaseId);
+        xhr.send(body);
+      });
+
+    return execute(token, true);
   }
 
   async function streamChat(
@@ -226,6 +340,35 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    createKnowledgeBase(payload: KnowledgeBaseCreate): Promise<KnowledgeBase> {
+      const body = knowledgeBaseCreateSchema.parse(payload);
+      return request(
+        "/api/v1/knowledge-bases",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => knowledgeBaseSchema.parse(data),
+      );
+    },
+
+    listDocuments(knowledgeBaseId?: string): Promise<DocumentRecord[]> {
+      const query = knowledgeBaseId
+        ? `?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`
+        : "";
+      return request(`/api/v1/documents${query}`, { method: "GET" }, (data) =>
+        documentListSchema.parse(data),
+      );
+    },
+
+    getJob(jobId: string): Promise<Job> {
+      return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, { method: "GET" }, (data) =>
+        jobSchema.parse(data),
+      );
+    },
+
+    uploadDocument,
     streamChat,
   };
 }
