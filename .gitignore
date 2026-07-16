@@ -28,3 +28,4 @@ infra/volumes/
 /.impeccable/critique/
 /package-lock.json
 /skills-lock.json
+.alma-snapshots

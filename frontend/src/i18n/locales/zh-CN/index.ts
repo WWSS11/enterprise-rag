@@ -8,6 +8,10 @@ import { evidenceZh, type EvidenceDict } from "./evidence";
 import { knowledgeBasesZh, type KnowledgeBasesDict } from "./knowledgeBases";
 import { documentsZh, type DocumentsDict } from "./documents";
 import { jobsZh, type JobsDict } from "./jobs";
+import { evaluationsZh, type EvaluationsDict } from "./evaluations";
+import { evaluationCasesZh, type EvaluationCasesDict } from "./evaluationCases";
+import { evaluationRunsZh, type EvaluationRunsDict } from "./evaluationRuns";
+import { qualityGatesZh, type QualityGatesDict } from "./qualityGates";
 
 export const zhCN = {
   common: commonZh,
@@ -20,6 +24,10 @@ export const zhCN = {
   knowledgeBases: knowledgeBasesZh,
   documents: documentsZh,
   jobs: jobsZh,
+  evaluations: evaluationsZh,
+  evaluationCases: evaluationCasesZh,
+  evaluationRuns: evaluationRunsZh,
+  qualityGates: qualityGatesZh,
 } as const;
 
 export type AppResources = {
@@ -33,4 +41,8 @@ export type AppResources = {
   knowledgeBases: KnowledgeBasesDict;
   documents: DocumentsDict;
   jobs: JobsDict;
+  evaluations: EvaluationsDict;
+  evaluationCases: EvaluationCasesDict;
+  evaluationRuns: EvaluationRunsDict;
+  qualityGates: QualityGatesDict;
 };

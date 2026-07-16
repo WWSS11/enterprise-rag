@@ -12,6 +12,20 @@ import {
   documentUploadAcceptedSchema,
   jobSchema,
   chatRequestSchema,
+  evaluationDatasetCreateSchema,
+  evaluationDatasetListSchema,
+  evaluationDatasetSchema,
+  evaluationCaseBulkCreateSchema,
+  evaluationCaseCreateSchema,
+  evaluationCaseListSchema,
+  evaluationCaseSchema,
+  evaluationRunCreateSchema,
+  evaluationRunSchema,
+  evaluationReportSchema,
+  evaluationRunComparisonRequestSchema,
+  evaluationRunComparisonSchema,
+  evaluationQualityGateRequestSchema,
+  evaluationQualityGateReportSchema,
   type CurrentIdentity,
   type HealthResponse,
   type KnowledgeBase,
@@ -20,6 +34,18 @@ import {
   type DocumentUploadAccepted,
   type Job,
   type ChatRequest,
+  type EvaluationDataset,
+  type EvaluationDatasetCreate,
+  type EvaluationCase,
+  type EvaluationCaseBulkCreate,
+  type EvaluationCaseCreate,
+  type EvaluationRun,
+  type EvaluationRunCreate,
+  type EvaluationReport,
+  type EvaluationRunComparison,
+  type EvaluationRunComparisonRequest,
+  type EvaluationQualityGateRequest,
+  type EvaluationQualityGateResult,
 } from "./types";
 
 export type AccessTokenProvider = () => Promise<string | null>;
@@ -50,12 +76,12 @@ export function createApiClient(options: ApiClientOptions) {
   const fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   const xhrFactory = options.xhrFactory ?? (() => new XMLHttpRequest());
 
-  async function request<T>(
+  async function requestWithMetadata<T>(
     path: string,
     init: RequestInit = {},
     parse: (data: unknown) => T,
     allowAnonymous = false,
-  ): Promise<T> {
+  ): Promise<{ data: T; requestId: string | null }> {
     const headers = new Headers(init.headers);
     if (!headers.has("Accept")) {
       headers.set("Accept", "application/json");
@@ -106,12 +132,23 @@ export function createApiClient(options: ApiClientOptions) {
       throw new ApiError(response.status, problem, requestId, response.headers.get("Retry-After"));
     }
 
+    const requestId = response.headers.get("x-request-id");
     if (response.status === 204) {
-      return parse(null);
+      return { data: parse(null), requestId };
     }
 
-    const data: unknown = await response.json();
-    return parse(data);
+    const responseData: unknown = await response.json();
+    return { data: parse(responseData), requestId };
+  }
+
+  async function request<T>(
+    path: string,
+    init: RequestInit = {},
+    parse: (data: unknown) => T,
+    allowAnonymous = false,
+  ): Promise<T> {
+    const response = await requestWithMetadata(path, init, parse, allowAnonymous);
+    return response.data;
   }
 
   async function uploadDocument(
@@ -366,6 +403,157 @@ export function createApiClient(options: ApiClientOptions) {
       return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, { method: "GET" }, (data) =>
         jobSchema.parse(data),
       );
+    },
+
+    listEvaluationDatasets(): Promise<EvaluationDataset[]> {
+      return request("/api/v1/evaluations/datasets", { method: "GET" }, (data) =>
+        evaluationDatasetListSchema.parse(data),
+      );
+    },
+
+    createEvaluationDataset(payload: EvaluationDatasetCreate): Promise<EvaluationDataset> {
+      const body = evaluationDatasetCreateSchema.parse(payload);
+      return request(
+        "/api/v1/evaluations/datasets",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationDatasetSchema.parse(data),
+      );
+    },
+
+    getEvaluationDataset(datasetId: string): Promise<EvaluationDataset> {
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}`,
+        { method: "GET" },
+        (data) => evaluationDatasetSchema.parse(data),
+      );
+    },
+
+    createEvaluationCase(
+      datasetId: string,
+      payload: EvaluationCaseCreate,
+    ): Promise<EvaluationCase> {
+      const body = evaluationCaseCreateSchema.parse(payload);
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/cases`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationCaseSchema.parse(data),
+      );
+    },
+
+    createEvaluationCasesBulk(
+      datasetId: string,
+      payload: EvaluationCaseBulkCreate,
+    ): Promise<EvaluationCase[]> {
+      const body = evaluationCaseBulkCreateSchema.parse(payload);
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/cases/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationCaseListSchema.parse(data),
+      );
+    },
+
+    listEvaluationCases(datasetId: string): Promise<EvaluationCase[]> {
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/cases`,
+        { method: "GET" },
+        (data) => evaluationCaseListSchema.parse(data),
+      );
+    },
+
+    createEvaluationRun(payload: EvaluationRunCreate): Promise<EvaluationRun> {
+      const body = evaluationRunCreateSchema.parse(payload);
+      return request(
+        "/api/v1/evaluations/runs",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationRunSchema.parse(data),
+      );
+    },
+
+    getEvaluationRun(runId: string): Promise<EvaluationRun> {
+      return request(
+        `/api/v1/evaluations/runs/${encodeURIComponent(runId)}`,
+        { method: "GET" },
+        (data) => evaluationRunSchema.parse(data),
+      );
+    },
+
+    getEvaluationRunReport(runId: string): Promise<EvaluationReport> {
+      return request(
+        `/api/v1/evaluations/runs/${encodeURIComponent(runId)}/report`,
+        { method: "GET" },
+        (data) => evaluationReportSchema.parse(data),
+      );
+    },
+
+    recalculateEvaluationRun(runId: string): Promise<EvaluationRun> {
+      return request(
+        `/api/v1/evaluations/runs/${encodeURIComponent(runId)}/recalculate`,
+        { method: "POST" },
+        (data) => evaluationRunSchema.parse(data),
+      );
+    },
+
+    compareEvaluationRuns(
+      candidateRunId: string,
+      payload: EvaluationRunComparisonRequest,
+    ): Promise<EvaluationRunComparison> {
+      const body = evaluationRunComparisonRequestSchema.parse(payload);
+      return request(
+        `/api/v1/evaluations/runs/${encodeURIComponent(candidateRunId)}/compare`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationRunComparisonSchema.parse(data),
+      );
+    },
+
+    async gateEvaluationRun(
+      candidateRunId: string,
+      payload: EvaluationQualityGateRequest,
+    ): Promise<EvaluationQualityGateResult> {
+      const body = evaluationQualityGateRequestSchema.parse(payload);
+      try {
+        const response = await requestWithMetadata(
+          `/api/v1/evaluations/runs/${encodeURIComponent(candidateRunId)}/gate`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+          (data) => evaluationQualityGateReportSchema.parse(data),
+        );
+        return { report: response.data, request_id: response.requestId, conflict: false };
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          const report = evaluationQualityGateReportSchema.safeParse(error.problem.data);
+          if (report.success) {
+            return {
+              report: report.data,
+              request_id: error.requestId,
+              conflict: true,
+            };
+          }
+        }
+        throw error;
+      }
     },
 
     uploadDocument,

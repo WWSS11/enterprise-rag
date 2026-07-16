@@ -8,7 +8,6 @@ import { LoginPage } from "@/pages/LoginPage";
 import { CallbackPage } from "@/pages/CallbackPage";
 import { SilentCallbackPage } from "@/pages/SilentCallbackPage";
 import { ForbiddenPage, NotFoundPage } from "@/pages/StatusPages";
-import { EvaluationsPage } from "@/pages/RoutePlaceholders";
 import { SystemPage } from "@/pages/SystemPage";
 
 const ChatPage = lazy(() =>
@@ -32,6 +31,24 @@ const DocumentsPage = lazy(() =>
 );
 const JobsPage = lazy(() =>
   import("@/pages/JobsPage").then((module) => ({ default: module.JobsPage })),
+);
+const EvaluationsPage = lazy(() =>
+  import("@/pages/EvaluationsPage").then((module) => ({ default: module.EvaluationsPage })),
+);
+const CreateEvaluationDatasetPage = lazy(() =>
+  import("@/pages/CreateEvaluationDatasetPage").then((module) => ({
+    default: module.CreateEvaluationDatasetPage,
+  })),
+);
+const EvaluationDatasetPage = lazy(() =>
+  import("@/pages/EvaluationDatasetPage").then((module) => ({
+    default: module.EvaluationDatasetPage,
+  })),
+);
+const EvaluationRunPage = lazy(() =>
+  import("@/pages/EvaluationRunPage").then((module) => ({
+    default: module.EvaluationRunPage,
+  })),
 );
 
 function LazyRoute({ children }: { children: ReactNode }) {
@@ -79,7 +96,22 @@ export function AppRoutes() {
           element={<LazyRoute><KnowledgeBaseDetailPage /></LazyRoute>}
         />
         <Route path="documents" element={<LazyRoute><DocumentsPage /></LazyRoute>} />
-        <Route path="evaluations" element={<EvaluationsPage />} />
+        <Route
+          path="evaluations"
+          element={<LazyRoute><EvaluationsPage /></LazyRoute>}
+        />
+        <Route
+          path="evaluations/new"
+          element={<LazyRoute><CreateEvaluationDatasetPage /></LazyRoute>}
+        />
+        <Route
+          path="evaluations/datasets/:datasetId"
+          element={<LazyRoute><EvaluationDatasetPage /></LazyRoute>}
+        />
+        <Route
+          path="evaluations/runs/:runId"
+          element={<LazyRoute><EvaluationRunPage /></LazyRoute>}
+        />
         <Route path="jobs" element={<LazyRoute><JobsPage /></LazyRoute>} />
         <Route path="system" element={<SystemPage />} />
       </Route>
