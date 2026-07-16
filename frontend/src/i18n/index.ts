@@ -34,6 +34,10 @@ export const ns = [
   "knowledgeBases",
   "documents",
   "jobs",
+  "evaluations",
+  "evaluationCases",
+  "evaluationRuns",
+  "qualityGates",
 ] as const;
 
 void i18n.use(initReactI18next).init({

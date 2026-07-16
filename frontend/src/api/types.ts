@@ -119,6 +119,223 @@ export const chatRequestSchema = z.object({
 });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
 
+export const evaluationDatasetCreateSchema = z.object({
+  knowledge_base_id: z.string().uuid(),
+  name: z.string().min(1).max(255),
+  description: z.string().max(4000).nullable().optional(),
+});
+export type EvaluationDatasetCreate = z.infer<typeof evaluationDatasetCreateSchema>;
+
+export const evaluationDatasetSchema = z.object({
+  id: z.string().uuid(),
+  tenant_id: z.string(),
+  knowledge_base_id: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  status: z.string(),
+  created_by: z.string(),
+  created_at: apiDateTimeSchema,
+  updated_at: apiDateTimeSchema,
+});
+export const evaluationDatasetListSchema = z.array(evaluationDatasetSchema);
+export type EvaluationDataset = z.infer<typeof evaluationDatasetSchema>;
+
+export const evaluationCaseCreateSchema = z.object({
+  question: z.string().min(1).max(8000),
+  reference_answer: z.string().min(1).max(32000),
+  expected_document_ids: z.array(z.string().uuid()).max(100).optional(),
+  acceptable_citation_document_ids: z.array(z.string().uuid()).max(100).optional(),
+  required_key_points: z.array(z.string()).max(100).optional(),
+  required_key_point_groups: z.array(z.array(z.string()).max(20)).max(100).optional(),
+  should_refuse: z.boolean().optional(),
+  tags: z.array(z.string()).max(50).optional(),
+});
+export type EvaluationCaseCreate = z.infer<typeof evaluationCaseCreateSchema>;
+
+export const evaluationCaseBulkCreateSchema = z.object({
+  cases: z.array(evaluationCaseCreateSchema).min(1).max(500),
+});
+export type EvaluationCaseBulkCreate = z.infer<typeof evaluationCaseBulkCreateSchema>;
+
+export const evaluationCaseSchema = z.object({
+  id: z.string().uuid(),
+  dataset_id: z.string().uuid(),
+  question: z.string(),
+  reference_answer: z.string(),
+  expected_document_ids: z.array(z.string()),
+  acceptable_citation_document_ids: z.array(z.string()),
+  required_key_points: z.array(z.string()),
+  required_key_point_groups: z.array(z.array(z.string())),
+  should_refuse: z.boolean(),
+  tags: z.array(z.string()),
+  created_at: apiDateTimeSchema,
+  updated_at: apiDateTimeSchema,
+});
+export const evaluationCaseListSchema = z.array(evaluationCaseSchema);
+export type EvaluationCase = z.infer<typeof evaluationCaseSchema>;
+
+export const evaluationRunCreateSchema = z.object({
+  dataset_id: z.string().uuid(),
+});
+export type EvaluationRunCreate = z.infer<typeof evaluationRunCreateSchema>;
+
+export const evaluationRunSchema = z.object({
+  id: z.string().uuid(),
+  tenant_id: z.string(),
+  knowledge_base_id: z.string().uuid(),
+  dataset_id: z.string().uuid(),
+  created_by: z.string(),
+  task_id: z.string().nullable(),
+  status: z.string(),
+  progress: z.number().int().min(0).max(100),
+  total_cases: z.number().int().nonnegative(),
+  completed_cases: z.number().int().nonnegative(),
+  failed_cases: z.number().int().nonnegative(),
+  config_snapshot: z.record(z.string(), z.unknown()),
+  summary: z.record(z.string(), z.unknown()),
+  started_at: apiDateTimeSchema.nullable(),
+  completed_at: apiDateTimeSchema.nullable(),
+  error_message: z.string().nullable(),
+  created_at: apiDateTimeSchema,
+  updated_at: apiDateTimeSchema,
+});
+export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
+
+export const evaluationResultSchema = z.object({
+  id: z.string().uuid(),
+  run_id: z.string().uuid(),
+  case_id: z.string().uuid(),
+  status: z.string(),
+  rewritten_query: z.string().nullable(),
+  answer: z.string().nullable(),
+  retrieved_documents: z.array(z.record(z.string(), z.unknown())),
+  reranked_documents: z.array(z.record(z.string(), z.unknown())),
+  citations: z.array(z.record(z.string(), z.unknown())),
+  citation_evidence: z.array(z.record(z.string(), z.unknown())),
+  metrics: z.record(z.string(), z.unknown()),
+  first_token_ms: z.number().nullable().optional(),
+  total_latency_ms: z.number().nullable().optional(),
+  error_message: z.string().nullable(),
+  created_at: apiDateTimeSchema,
+  updated_at: apiDateTimeSchema,
+});
+export type EvaluationResult = z.infer<typeof evaluationResultSchema>;
+
+export const evaluationResultReportSchema = evaluationResultSchema.extend({
+  question: z.string(),
+  reference_answer: z.string(),
+  expected_document_ids: z.array(z.string()),
+  acceptable_citation_document_ids: z.array(z.string()),
+  required_key_points: z.array(z.string()),
+  required_key_point_groups: z.array(z.array(z.string())),
+  should_refuse: z.boolean(),
+  tags: z.array(z.string()),
+});
+export type EvaluationResultReport = z.infer<typeof evaluationResultReportSchema>;
+
+export const evaluationReportSchema = z.object({
+  run: evaluationRunSchema,
+  dataset: evaluationDatasetSchema,
+  results: z.array(evaluationResultReportSchema),
+});
+export type EvaluationReport = z.infer<typeof evaluationReportSchema>;
+
+export const evaluationRunComparisonRequestSchema = z.object({
+  baseline_run_id: z.string().uuid(),
+});
+export type EvaluationRunComparisonRequest = z.infer<
+  typeof evaluationRunComparisonRequestSchema
+>;
+
+const optionalNullableMetricSchema = z.number().nullable().optional();
+
+export const evaluationMetricComparisonSchema = z.object({
+  metric: z.string(),
+  baseline: optionalNullableMetricSchema,
+  candidate: optionalNullableMetricSchema,
+  delta: optionalNullableMetricSchema,
+  relative_delta: optionalNullableMetricSchema,
+});
+export type EvaluationMetricComparison = z.infer<typeof evaluationMetricComparisonSchema>;
+
+export const evaluationConfigDifferenceSchema = z.object({
+  key: z.string(),
+  baseline: z.unknown(),
+  candidate: z.unknown(),
+});
+export type EvaluationConfigDifference = z.infer<typeof evaluationConfigDifferenceSchema>;
+
+export const evaluationRunComparisonSchema = z.object({
+  baseline_run_id: z.string().uuid(),
+  candidate_run_id: z.string().uuid(),
+  dataset_id: z.string().uuid(),
+  metrics: z.array(evaluationMetricComparisonSchema),
+  config_differences: z.array(evaluationConfigDifferenceSchema),
+});
+export type EvaluationRunComparison = z.infer<typeof evaluationRunComparisonSchema>;
+
+export const evaluationQualityGateThresholdsSchema = z.object({
+  max_metric_regressions: z.record(z.string(), z.number()).optional(),
+  minimum_candidate_metrics: z.record(z.string(), z.number()).optional(),
+  max_latency_increase_ratios: z.record(z.string(), z.number()).optional(),
+  require_zero_failed_cases: z.boolean().optional(),
+});
+export type EvaluationQualityGateThresholds = z.infer<
+  typeof evaluationQualityGateThresholdsSchema
+>;
+
+export const DEFAULT_EVALUATION_QUALITY_GATE_THRESHOLDS = {
+  max_metric_regressions: {
+    retrieval_recall_at_k: 0.0,
+    rerank_recall_at_k: 0.0,
+    citation_recall: 0.0,
+    key_point_group_coverage: 0.02,
+    citation_key_point_support_rate: 0.02,
+    citation_required_point_support_precision: 0.02,
+    refusal_accuracy: 0.0,
+  },
+  minimum_candidate_metrics: {
+    retrieval_recall_at_k: 0.95,
+    rerank_recall_at_k: 0.9,
+    refusal_accuracy: 0.95,
+  },
+  max_latency_increase_ratios: {
+    average_first_token_ms: 0.25,
+    average_total_latency_ms: 0.2,
+  },
+  require_zero_failed_cases: true,
+} satisfies EvaluationQualityGateThresholds;
+
+export const evaluationQualityGateRequestSchema = evaluationRunComparisonRequestSchema.extend({
+  thresholds: evaluationQualityGateThresholdsSchema.optional(),
+});
+export type EvaluationQualityGateRequest = z.infer<typeof evaluationQualityGateRequestSchema>;
+
+export const evaluationQualityGateCheckSchema = z.object({
+  metric: z.string(),
+  rule: z.string(),
+  threshold: z.number(),
+  baseline: optionalNullableMetricSchema,
+  candidate: optionalNullableMetricSchema,
+  actual: optionalNullableMetricSchema,
+  passed: z.boolean(),
+  reason: z.string(),
+});
+export type EvaluationQualityGateCheck = z.infer<typeof evaluationQualityGateCheckSchema>;
+
+export const evaluationQualityGateReportSchema = z.object({
+  passed: z.boolean(),
+  comparison: evaluationRunComparisonSchema,
+  checks: z.array(evaluationQualityGateCheckSchema),
+});
+export type EvaluationQualityGateReport = z.infer<typeof evaluationQualityGateReportSchema>;
+
+export type EvaluationQualityGateResult = {
+  report: EvaluationQualityGateReport;
+  request_id: string | null;
+  conflict: boolean;
+};
+
 export const chatStageSchema = z.enum([
   "rewrite_query",
   "hybrid_retrieve",

@@ -8,6 +8,10 @@ import { evidenceEn } from "./evidence";
 import { knowledgeBasesEn } from "./knowledgeBases";
 import { documentsEn } from "./documents";
 import { jobsEn } from "./jobs";
+import { evaluationsEn } from "./evaluations";
+import { evaluationCasesEn } from "./evaluationCases";
+import { evaluationRunsEn } from "./evaluationRuns";
+import { qualityGatesEn } from "./qualityGates";
 import type { AppResources } from "../zh-CN";
 
 export const enUS = {
@@ -21,4 +25,8 @@ export const enUS = {
   knowledgeBases: knowledgeBasesEn,
   documents: documentsEn,
   jobs: jobsEn,
+  evaluations: evaluationsEn,
+  evaluationCases: evaluationCasesEn,
+  evaluationRuns: evaluationRunsEn,
+  qualityGates: qualityGatesEn,
 } as const satisfies AppResources;

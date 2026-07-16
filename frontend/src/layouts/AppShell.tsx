@@ -25,7 +25,7 @@ const NAV_ITEMS: { to: string; key: "chat" | "knowledgeBases" | "documents" | "e
   { to: "/app/chat", key: "chat", icon: IconChat, ready: true },
   { to: "/app/knowledge-bases", key: "knowledgeBases", icon: IconLibrary, ready: true },
   { to: "/app/documents", key: "documents", icon: IconDocument, ready: true },
-  { to: "/app/evaluations", key: "evaluations", icon: IconEval, ready: false },
+  { to: "/app/evaluations", key: "evaluations", icon: IconEval, ready: true },
   { to: "/app/jobs", key: "jobs", icon: IconJobs, ready: true },
   { to: "/app/system", key: "system", icon: IconSystem, ready: true },
 ];
