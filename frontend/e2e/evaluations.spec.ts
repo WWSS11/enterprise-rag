@@ -449,6 +449,15 @@ test.describe("Evaluation Console mocked API", () => {
     const cases: Array<ReturnType<typeof answerableCase> | ReturnType<typeof refusalCase>> = [];
     const candidateRunGetStatuses: string[] = [];
     const modelApiRequests: string[] = [];
+    let blockNextCaseRefresh = false;
+    let releaseFirstCaseRefresh!: () => void;
+    const firstCaseRefreshBlocked = new Promise<void>((resolve) => {
+      releaseFirstCaseRefresh = resolve;
+    });
+    let markFirstCaseRefreshStarted!: () => void;
+    const firstCaseRefreshStarted = new Promise<void>((resolve) => {
+      markFirstCaseRefreshStarted = resolve;
+    });
     const onRequest = (request: { url: () => string }) => {
       if (/\/api\/v1\/chat|anthropic|openai|generativelanguage/i.test(request.url())) {
         modelApiRequests.push(request.url());
@@ -508,10 +517,16 @@ test.describe("Evaluation Console mocked API", () => {
           });
           const created = answerableCase();
           cases.push(created);
+          blockNextCaseRefresh = true;
           await fulfillJson(route, created, 201);
           return;
         }
         expect(route.request().method()).toBe("GET");
+        if (blockNextCaseRefresh) {
+          blockNextCaseRefresh = false;
+          markFirstCaseRefreshStarted();
+          await firstCaseRefreshBlocked;
+        }
         await fulfillJson(route, cases);
       });
       await page.route("**/api/v1/documents**", (route) =>
@@ -591,13 +606,23 @@ test.describe("Evaluation Console mocked API", () => {
       await page.getByLabel("Required key points").fill("seven years");
       await page.getByLabel("Key-point alias groups").fill("seven years | 7 years");
       await page.getByLabel("Tags").fill("retention\npolicy");
+      const firstCaseCreated = page.waitForResponse((response) =>
+        response.url().endsWith(`/api/v1/evaluations/datasets/${datasetId}/cases`) &&
+        response.request().method() === "POST",
+      );
       await page.getByRole("button", { name: "Save case" }).click();
-      await expect(page.getByText(answerableQuestion)).toBeVisible();
+      expect((await firstCaseCreated).status()).toBe(201);
+      await firstCaseRefreshStarted;
 
       await page.getByLabel("Question").fill(refusalQuestion);
       await page.getByLabel("Reference answer").fill(refusalReference);
       await page.getByRole("radio", { name: /Should refuse/ }).check();
       await expect(page.getByRole("group", { name: "Expected retrieval documents" })).toHaveCount(0);
+      releaseFirstCaseRefresh();
+      await expect(page.getByText(answerableQuestion)).toBeVisible();
+      await expect(page.getByLabel("Question")).toHaveValue(refusalQuestion);
+      await expect(page.getByLabel("Reference answer")).toHaveValue(refusalReference);
+      await expect(page.getByRole("radio", { name: /Should refuse/ })).toBeChecked();
       await page.getByRole("button", { name: "Save case" }).click();
       await expect(page.getByText(refusalQuestion)).toBeVisible();
 

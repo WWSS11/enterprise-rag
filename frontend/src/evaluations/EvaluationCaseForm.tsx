@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { DocumentRecord, EvaluationCaseCreate } from "@/api/types";
 import { Button } from "@/components/Button";
@@ -61,16 +61,20 @@ export function EvaluationCaseForm({
   const [keyPointGroupsText, setKeyPointGroupsText] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const submissionPendingRef = useRef(false);
+  const changedDuringSubmissionRef = useRef<Set<string>>(new Set());
 
-  function reset() {
-    setQuestion("");
-    setReferenceAnswer("");
-    setShouldRefuse(false);
-    setExpectedDocumentIds([]);
-    setAdditionalCitationIds([]);
-    setRequiredKeyPointsText("");
-    setKeyPointGroupsText("");
-    setTagsText("");
+  function resetUnchangedFields(changedFields: ReadonlySet<string>) {
+    if (!changedFields.has("question")) setQuestion("");
+    if (!changedFields.has("reference_answer")) setReferenceAnswer("");
+    if (!changedFields.has("case-type")) setShouldRefuse(false);
+    if (!changedFields.has("expected_document_ids")) setExpectedDocumentIds([]);
+    if (!changedFields.has("acceptable_citation_document_ids")) {
+      setAdditionalCitationIds([]);
+    }
+    if (!changedFields.has("required_key_points")) setRequiredKeyPointsText("");
+    if (!changedFields.has("required_key_point_groups")) setKeyPointGroupsText("");
+    if (!changedFields.has("tags")) setTagsText("");
     setValidationErrors([]);
   }
 
@@ -131,6 +135,8 @@ export function EvaluationCaseForm({
     setValidationErrors(deterministicErrors);
     if (deterministicErrors.length > 0) return;
 
+    changedDuringSubmissionRef.current.clear();
+    submissionPendingRef.current = true;
     try {
       await onSubmit({
         question: cleanQuestion,
@@ -143,17 +149,33 @@ export function EvaluationCaseForm({
         tags,
       });
     } catch {
+      submissionPendingRef.current = false;
+      changedDuringSubmissionRef.current.clear();
       return;
     }
-    reset();
+    submissionPendingRef.current = false;
+    const changedFields = new Set(changedDuringSubmissionRef.current);
+    changedDuringSubmissionRef.current.clear();
+    resetUnchangedFields(changedFields);
   }
 
   return (
-    <form className={styles.caseForm} onSubmit={(event) => void submit(event)}>
+    <form
+      className={styles.caseForm}
+      onChangeCapture={(event) => {
+        if (!submissionPendingRef.current) return;
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+        const field = target.name || target.id;
+        if (field) changedDuringSubmissionRef.current.add(field);
+      }}
+      onSubmit={(event) => void submit(event)}
+    >
       <div className={styles.formField}>
         <label htmlFor="evaluation-question">{t("evaluationCases:question")}</label>
         <textarea
           id="evaluation-question"
+          name="question"
           rows={4}
           maxLength={8000}
           value={question}
@@ -167,6 +189,7 @@ export function EvaluationCaseForm({
         <label htmlFor="evaluation-reference">{t("evaluationCases:referenceAnswer")}</label>
         <textarea
           id="evaluation-reference"
+          name="reference_answer"
           rows={7}
           maxLength={32000}
           value={referenceAnswer}
@@ -220,6 +243,7 @@ export function EvaluationCaseForm({
                   <label key={document.id} className={styles.checkboxOption}>
                     <input
                       type="checkbox"
+                      name="expected_document_ids"
                       checked={expectedDocumentIds.includes(document.id)}
                       onChange={(event) =>
                         setExpectedDocumentIds((current) =>
@@ -252,6 +276,7 @@ export function EvaluationCaseForm({
                     <label key={document.id} className={styles.checkboxOption}>
                       <input
                         type="checkbox"
+                        name="acceptable_citation_document_ids"
                         checked={expected || additionalCitationIds.includes(document.id)}
                         disabled={expected}
                         onChange={(event) =>
@@ -277,6 +302,7 @@ export function EvaluationCaseForm({
         <label htmlFor="evaluation-key-points">{t("evaluationCases:requiredKeyPoints")}</label>
         <textarea
           id="evaluation-key-points"
+          name="required_key_points"
           rows={5}
           value={requiredKeyPointsText}
           onChange={(event) => setRequiredKeyPointsText(event.target.value)}
@@ -291,6 +317,7 @@ export function EvaluationCaseForm({
         </label>
         <textarea
           id="evaluation-key-point-groups"
+          name="required_key_point_groups"
           rows={5}
           value={keyPointGroupsText}
           onChange={(event) => setKeyPointGroupsText(event.target.value)}
@@ -303,6 +330,7 @@ export function EvaluationCaseForm({
         <label htmlFor="evaluation-tags">{t("evaluationCases:tags")}</label>
         <textarea
           id="evaluation-tags"
+          name="tags"
           rows={3}
           value={tagsText}
           onChange={(event) => setTagsText(event.target.value)}
