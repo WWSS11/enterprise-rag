@@ -193,7 +193,7 @@ test.describe("Knowledge Base Ops mocked API", () => {
       await expectNoHorizontalOverflow(page);
       await page.getByRole("button", { name: "上传并创建入库任务" }).click();
       await expect(page.getByText("文件已接收，真实入库任务已创建。")).toBeVisible();
-      await expect(page.getByText("已完成")).toBeVisible();
+      await expect(page.getByLabel("文档入库").getByText("已完成")).toBeVisible();
 
       await page.goto("/app/jobs");
       await expect(page.getByText(jobId)).toBeVisible();

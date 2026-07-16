@@ -352,6 +352,44 @@ describe("EvaluationCaseForm", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("does not clear a new case drafted while the previous submission is still settling", async () => {
+    const user = userEvent.setup();
+    let resolveSubmit!: () => void;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    renderForm({ onSubmit });
+
+    await completeRequiredAnswerableFields(user);
+    await user.type(screen.getByLabelText("必需关键点"), "old retention point");
+    await user.type(screen.getByLabelText("标签"), "old-tag");
+    await user.click(screen.getByRole("button", { name: "保存用例" }));
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    await user.clear(screen.getByLabelText("问题"));
+    await user.type(screen.getByLabelText("问题"), "Should this unsupported request be refused?");
+    await user.clear(screen.getByLabelText("参考答案"));
+    await user.type(screen.getByLabelText("参考答案"), "Refuse without supporting evidence.");
+    await user.click(screen.getByRole("radio", { name: /应拒答/ }));
+
+    await act(async () => {
+      resolveSubmit();
+    });
+
+    expect(screen.getByLabelText("问题")).toHaveValue(
+      "Should this unsupported request be refused?",
+    );
+    expect(screen.getByLabelText("参考答案")).toHaveValue(
+      "Refuse without supporting evidence.",
+    );
+    expect(screen.getByRole("radio", { name: /应拒答/ })).toBeChecked();
+    expect(screen.getByLabelText("必需关键点")).toHaveValue("");
+    expect(screen.getByLabelText("标签")).toHaveValue("");
+  });
+
   it("preserves form state and renders the mutation error when onSubmit rejects", async () => {
     const user = userEvent.setup();
     const error = new ApiError(
