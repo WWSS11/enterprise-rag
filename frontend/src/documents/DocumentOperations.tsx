@@ -99,6 +99,16 @@ export function DocumentOperations({
   const [uploadError, setUploadError] = useState<unknown>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState<DocumentUploadAccepted | null>(null);
+  const [scanRootAlias, setScanRootAlias] = useState("default");
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<unknown>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [documentActionError, setDocumentActionError] = useState<{
+    documentId: string;
+    action: "reindex" | "delete";
+    error: unknown;
+  } | null>(null);
+  const [documentJobs, setDocumentJobs] = useState<Record<string, string>>({});
   const locale = i18n.language as AppLocale;
 
   const documents = useQuery({
@@ -171,10 +181,90 @@ export function DocumentOperations({
     controllerRef.current?.abort();
   }
 
+  async function startScan() {
+    const rootAlias = scanRootAlias.trim();
+    if (!rootAlias || pendingAction) return;
+    setPendingAction("scan");
+    setScanError(null);
+    try {
+      const job = await api.scanDocuments({
+        root_alias: rootAlias,
+        knowledge_base_id: knowledgeBase.id,
+      });
+      rememberJobId(job.id);
+      setScanJobId(job.id);
+    } catch (error) {
+      setScanError(error);
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function runDocumentAction(
+    document: DocumentRecord,
+    action: "reindex" | "delete",
+  ) {
+    const actionKey = `${action}:${document.id}`;
+    if (pendingAction) return;
+    if (action === "delete" && !window.confirm(t("documents:deleteConfirm", { name: document.name }))) {
+      return;
+    }
+    setPendingAction(actionKey);
+    setDocumentActionError(null);
+    try {
+      const job =
+        action === "reindex"
+          ? await api.reindexDocument(document.id)
+          : await api.deleteDocument(document.id);
+      rememberJobId(job.id);
+      setDocumentJobs((current) => ({ ...current, [document.id]: job.id }));
+      await queryClient.invalidateQueries({ queryKey: ["documents", knowledgeBase.id] });
+    } catch (error) {
+      setDocumentActionError({ documentId: document.id, action, error });
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  function refreshDocumentsAfterJob() {
+    void queryClient.invalidateQueries({ queryKey: ["documents", knowledgeBase.id] });
+  }
+
   return (
     <div className={styles.root}>
       {canEdit ? (
-        <section className={styles.upload} aria-labelledby="document-upload-title">
+        <>
+          <section className={styles.upload} aria-labelledby="document-scan-title">
+            <div className={styles.sectionHeader}>
+              <div>
+                <h2 id="document-scan-title">{t("documents:scanTitle")}</h2>
+                <p>{t("documents:scanDetail")}</p>
+              </div>
+            </div>
+            <div className={styles.inlineOperation}>
+              <label htmlFor="document-scan-root">{t("documents:scanRootAlias")}</label>
+              <input
+                id="document-scan-root"
+                value={scanRootAlias}
+                maxLength={64}
+                onChange={(event) => setScanRootAlias(event.target.value)}
+              />
+              <Button
+                type="button"
+                disabled={!scanRootAlias.trim() || pendingAction === "scan"}
+                onClick={() => void startScan()}
+              >
+                {pendingAction === "scan" ? t("documents:scanStarting") : t("documents:scanStart")}
+              </Button>
+            </div>
+            <p className={styles.fieldHint}>{t("documents:scanRootHint")}</p>
+            {scanError ? <OperationError error={scanError} onRetry={() => void startScan()} /> : null}
+            {scanJobId ? (
+              <JobStatus jobId={scanJobId} onTerminal={refreshDocumentsAfterJob} />
+            ) : null}
+          </section>
+
+          <section className={styles.upload} aria-labelledby="document-upload-title">
           <div className={styles.sectionHeader}>
             <div>
               <h2 id="document-upload-title">{t("documents:uploadTitle")}</h2>
@@ -250,8 +340,11 @@ export function DocumentOperations({
             )}
           </div>
 
-          {accepted ? <JobStatus jobId={accepted.job_id} /> : null}
-        </section>
+            {accepted ? (
+              <JobStatus jobId={accepted.job_id} onTerminal={refreshDocumentsAfterJob} />
+            ) : null}
+          </section>
+        </>
       ) : (
         <section className={styles.readOnly} aria-labelledby="documents-read-only-title">
           <h2 id="documents-read-only-title">{t("documents:readOnlyTitle")}</h2>
@@ -287,6 +380,10 @@ export function DocumentOperations({
           <ul className={styles.documentList}>
             {documents.data.map((document) => {
               const status = documentStatus(document.status, t);
+              const active = ACTIVE_DOCUMENT_STATUSES.has(document.status);
+              const reindexAction = `reindex:${document.id}`;
+              const deleteAction = `delete:${document.id}`;
+              const documentJobId = documentJobs[document.id];
               return (
                 <li key={document.id} className={styles.documentRow}>
                   <div className={styles.documentMain}>
@@ -321,6 +418,46 @@ export function DocumentOperations({
                       <dd>{formatDateTime(locale, document.updated_at)}</dd>
                     </div>
                   </dl>
+                  {canEdit ? (
+                    <div className={styles.documentActions}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={active || !document.source_uri || pendingAction !== null}
+                        title={!document.source_uri ? t("documents:reindexUnavailable") : undefined}
+                        onClick={() => void runDocumentAction(document, "reindex")}
+                      >
+                        {pendingAction === reindexAction
+                          ? t("documents:reindexStarting")
+                          : t("documents:reindex")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        disabled={active || pendingAction !== null}
+                        onClick={() => void runDocumentAction(document, "delete")}
+                      >
+                        {pendingAction === deleteAction
+                          ? t("documents:deleteStarting")
+                          : t("documents:delete")}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {documentActionError?.documentId === document.id ? (
+                    <div className={styles.documentOperationResult}>
+                      <OperationError
+                        error={documentActionError.error}
+                        onRetry={() =>
+                          void runDocumentAction(document, documentActionError.action)
+                        }
+                      />
+                    </div>
+                  ) : null}
+                  {documentJobId ? (
+                    <div className={styles.documentOperationResult}>
+                      <JobStatus jobId={documentJobId} onTerminal={refreshDocumentsAfterJob} />
+                    </div>
+                  ) : null}
                 </li>
               );
             })}

@@ -1,6 +1,6 @@
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -28,7 +28,7 @@ const knowledgeBase: KnowledgeBase = {
   updated_at: "2026-07-15T00:00:00Z",
 };
 
-function documentRecord() {
+function documentRecord(overrides: Record<string, unknown> = {}) {
   return {
     id: documentId,
     tenant_id: "default",
@@ -48,10 +48,11 @@ function documentRecord() {
     extra_metadata: {},
     created_at: "2026-07-15T00:00:00Z",
     updated_at: "2026-07-15T00:00:00Z",
+    ...overrides,
   };
 }
 
-function jobRecord() {
+function jobRecord(overrides: Record<string, unknown> = {}) {
   return {
     id: jobId,
     document_id: documentId,
@@ -63,6 +64,7 @@ function jobRecord() {
     error_message: null,
     created_at: "2026-07-15T00:00:00Z",
     updated_at: "2026-07-15T00:00:01Z",
+    ...overrides,
   };
 }
 
@@ -279,5 +281,91 @@ describe("DocumentOperations", () => {
     expect(await screen.findByText("文件已接收，真实入库任务已创建。")).toBeVisible();
     expect(await screen.findByText("已完成")).toBeVisible();
     expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toContain(jobId);
+  });
+
+  it("scans, reindexes, and deletes through real job endpoints", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const scanJobId = "77777777-7777-4777-8777-777777777777";
+    const reindexJobId = "88888888-8888-4888-8888-888888888888";
+    const deleteJobId = "99999999-9999-4999-8999-999999999999";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/jobs/")) {
+        const requestedId = url.split("/").at(-1);
+        const type =
+          requestedId === scanJobId
+            ? "local_document_scan"
+            : requestedId === reindexJobId
+              ? "document_reindex"
+              : "document_deletion";
+        return new Response(
+          JSON.stringify(jobRecord({ id: requestedId, job_type: type })),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/documents/scan")) {
+        return new Response(
+          JSON.stringify(
+            jobRecord({ id: scanJobId, document_id: null, job_type: "local_document_scan" }),
+          ),
+          { status: 202, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith(`/documents/${documentId}/reindex`)) {
+        return new Response(
+          JSON.stringify(jobRecord({ id: reindexJobId, job_type: "document_reindex" })),
+          { status: 202, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith(`/documents/${documentId}`) && init?.method === "DELETE") {
+        return new Response(
+          JSON.stringify(jobRecord({ id: deleteJobId, job_type: "document_deletion" })),
+          { status: 202, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify([
+          documentRecord({ status: "ready", index_version: "v1", indexed_at: "2026-07-15T00:00:00Z" }),
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const fetchImpl = fetchMock as unknown as typeof fetch;
+    renderDocuments(new FakeXhr(), fetchImpl);
+
+    expect(await screen.findByText("policy.pdf")).toBeVisible();
+    await user.clear(screen.getByLabelText("扫描根目录别名"));
+    await user.type(screen.getByLabelText("扫描根目录别名"), "policies");
+    await user.click(screen.getByRole("button", { name: "开始目录扫描" }));
+    const scanHeading = await screen.findByRole("heading", { name: "本地目录扫描" });
+    expect(within(scanHeading.closest("article")!).getByText(scanJobId)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "重新入库" }));
+    const reindexHeading = await screen.findByRole("heading", { name: "文档重新入库" });
+    expect(within(reindexHeading.closest("article")!).getByText(reindexJobId)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "删除文档" }));
+    expect(window.confirm).toHaveBeenCalledWith(
+      "确定删除“policy.pdf”吗？后端将异步删除文档、分块和向量。",
+    );
+    const deleteHeading = await screen.findByRole("heading", { name: "文档删除" });
+    expect(within(deleteHeading.closest("article")!).getByText(deleteJobId)).toBeVisible();
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url: String(url),
+      method: (init as RequestInit | undefined)?.method ?? "GET",
+    }));
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { url: "http://api.test/api/v1/documents/scan", method: "POST" },
+        {
+          url: `http://api.test/api/v1/documents/${documentId}/reindex`,
+          method: "POST",
+        },
+        { url: `http://api.test/api/v1/documents/${documentId}`, method: "DELETE" },
+      ]),
+    );
+    expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toContain(deleteJobId);
   });
 });

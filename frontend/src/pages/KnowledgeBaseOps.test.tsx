@@ -225,6 +225,62 @@ describe("Knowledge Base Ops pages", () => {
     expect(screen.queryByRole("button", { name: "上传并创建入库任务" })).toBeNull();
   });
 
+  it("lets a confirmed owner upsert a real user or group grant", async () => {
+    const user = userEvent.setup();
+    const memberId = "77777777-7777-4777-8777-777777777777";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/knowledge-bases/${kbId}/members`)) {
+        return new Response(
+          JSON.stringify({
+            id: memberId,
+            knowledge_base_id: kbId,
+            principal_type: "group",
+            principal_id: "engineering",
+            permission: "editor",
+            created_at: "2026-07-15T00:00:00Z",
+            updated_at: "2026-07-15T00:00:00Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const body = url.includes("/documents") ? [] : [kb()];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const fetchImpl = fetchMock as unknown as typeof fetch;
+    renderOps(
+      <Routes>
+        <Route path="/app/knowledge-bases/:knowledgeBaseId" element={<KnowledgeBaseDetailPage />} />
+      </Routes>,
+      fetchImpl,
+      {
+        route: `/app/knowledge-bases/${kbId}`,
+        identity: { user_id: "owner-1" },
+      },
+    );
+
+    expect(await screen.findByRole("heading", { name: "授权用户或群组" })).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("主体类型"), "group");
+    await user.type(screen.getByLabelText("主体标识"), "engineering");
+    await user.selectOptions(screen.getByLabelText("权限"), "editor");
+    await user.click(screen.getByRole("button", { name: "保存授权" }));
+
+    expect(await screen.findByText("已将 engineering 的权限设置为 editor。")).toBeVisible();
+    const memberCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith(`/knowledge-bases/${kbId}/members`),
+    );
+    expect(memberCall).toBeDefined();
+    expect((memberCall?.[1] as RequestInit).method).toBe("PUT");
+    expect(JSON.parse(String((memberCall?.[1] as RequestInit).body))).toEqual({
+      principal_type: "group",
+      principal_id: "engineering",
+      permission: "editor",
+    });
+  });
+
   it("preserves create form state across locale changes", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn() as unknown as typeof fetch;

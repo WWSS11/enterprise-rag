@@ -47,6 +47,28 @@ export const knowledgeBaseCreateSchema = z.object({
 });
 export type KnowledgeBaseCreate = z.infer<typeof knowledgeBaseCreateSchema>;
 
+export const knowledgeBaseMemberUpsertSchema = z.object({
+  principal_type: z.enum(["user", "group"]),
+  principal_id: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/),
+  permission: z.enum(["reader", "editor", "owner"]),
+});
+export type KnowledgeBaseMemberUpsert = z.infer<typeof knowledgeBaseMemberUpsertSchema>;
+
+export const knowledgeBaseMemberSchema = z.object({
+  id: z.string().uuid(),
+  knowledge_base_id: z.string().uuid(),
+  principal_type: z.string(),
+  principal_id: z.string(),
+  permission: z.string(),
+  created_at: apiDateTimeSchema,
+  updated_at: apiDateTimeSchema,
+});
+export type KnowledgeBaseMember = z.infer<typeof knowledgeBaseMemberSchema>;
+
 export const documentStatusSchema = z.enum([
   "pending",
   "queued",
@@ -102,6 +124,12 @@ export const documentUploadAcceptedSchema = z.object({
   task_id: z.string(),
 });
 export type DocumentUploadAccepted = z.infer<typeof documentUploadAcceptedSchema>;
+
+export const localScanRequestSchema = z.object({
+  root_alias: z.string().min(1).max(64),
+  knowledge_base_id: z.string().uuid().nullable().optional(),
+});
+export type LocalScanRequest = z.infer<typeof localScanRequestSchema>;
 
 export const citationSchema = z.object({
   document_id: z.string(),

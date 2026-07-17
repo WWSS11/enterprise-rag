@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/useAuth";
 import { config } from "@/config/env";
@@ -7,6 +8,10 @@ import { StatusPill, type StatusTone } from "@/components/StatusPill";
 import { CopyableValue } from "@/components/CopyableValue";
 import { isApiError } from "@/api/errors";
 import { TechnicalDetails } from "@/components/TechnicalDetails";
+import { Button } from "@/components/Button";
+import { OperationError } from "@/components/OperationError";
+import { JobStatus } from "@/jobs/JobStatus";
+import { rememberJobId } from "@/jobs/jobStorage";
 import { localizeApiError } from "@/i18n/apiError";
 import styles from "./SystemPage.module.css";
 
@@ -21,6 +26,19 @@ function tone(status: string | undefined, error: boolean, loading: boolean): Sta
 export function SystemPage() {
   const { t } = useTranslation();
   const { api, identity } = useAuth();
+  const [rebuildJobId, setRebuildJobId] = useState<string | null>(null);
+  const rebuild = useMutation({
+    mutationFn: () => api.rebuildIndex(),
+    onSuccess: (job) => {
+      rememberJobId(job.id);
+      setRebuildJobId(job.id);
+    },
+  });
+
+  function requestRebuild() {
+    if (!window.confirm(t("system:rebuildConfirm"))) return;
+    rebuild.mutate();
+  }
 
   const live = useQuery({
     queryKey: ["health", "live", "system"],
@@ -188,6 +206,29 @@ export function SystemPage() {
               <TechnicalDetails detail={readyLocalized.serverDetail} />
             </div>
           ) : null}
+        </article>
+
+        <article className={styles.card}>
+          <h2 className={styles.cardTitle}>{t("system:indexOperations")}</h2>
+          <p className={styles.muted}>{t("system:indexOperationsDetail")}</p>
+          {identity?.is_admin ? (
+            <div className={styles.actions}>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={rebuild.isPending}
+                onClick={requestRebuild}
+              >
+                {rebuild.isPending ? t("system:rebuildStarting") : t("system:rebuildIndex")}
+              </Button>
+            </div>
+          ) : (
+            <p className={styles.muted}>{t("system:rebuildAdminOnly")}</p>
+          )}
+          {rebuild.isError ? (
+            <OperationError error={rebuild.error} onRetry={requestRebuild} />
+          ) : null}
+          {rebuildJobId ? <JobStatus jobId={rebuildJobId} /> : null}
         </article>
       </section>
     </div>

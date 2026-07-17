@@ -8,8 +8,11 @@ import {
   knowledgeBaseListSchema,
   knowledgeBaseSchema,
   knowledgeBaseCreateSchema,
+  knowledgeBaseMemberSchema,
+  knowledgeBaseMemberUpsertSchema,
   documentListSchema,
   documentUploadAcceptedSchema,
+  localScanRequestSchema,
   jobSchema,
   chatRequestSchema,
   evaluationDatasetCreateSchema,
@@ -30,8 +33,11 @@ import {
   type HealthResponse,
   type KnowledgeBase,
   type KnowledgeBaseCreate,
+  type KnowledgeBaseMember,
+  type KnowledgeBaseMemberUpsert,
   type DocumentRecord,
   type DocumentUploadAccepted,
+  type LocalScanRequest,
   type Job,
   type ChatRequest,
   type EvaluationDataset,
@@ -390,6 +396,22 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    upsertKnowledgeBaseMember(
+      knowledgeBaseId: string,
+      payload: KnowledgeBaseMemberUpsert,
+    ): Promise<KnowledgeBaseMember> {
+      const body = knowledgeBaseMemberUpsertSchema.parse(payload);
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/members`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => knowledgeBaseMemberSchema.parse(data),
+      );
+    },
+
     listDocuments(knowledgeBaseId?: string): Promise<DocumentRecord[]> {
       const query = knowledgeBaseId
         ? `?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`
@@ -399,9 +421,46 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    scanDocuments(payload: LocalScanRequest): Promise<Job> {
+      const body = localScanRequestSchema.parse(payload);
+      return request(
+        "/api/v1/documents/scan",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => jobSchema.parse(data),
+      );
+    },
+
+    reindexDocument(documentId: string): Promise<Job> {
+      return request(
+        `/api/v1/documents/${encodeURIComponent(documentId)}/reindex`,
+        { method: "POST" },
+        (data) => jobSchema.parse(data),
+      );
+    },
+
+    deleteDocument(documentId: string): Promise<Job> {
+      return request(
+        `/api/v1/documents/${encodeURIComponent(documentId)}`,
+        { method: "DELETE" },
+        (data) => jobSchema.parse(data),
+      );
+    },
+
     getJob(jobId: string): Promise<Job> {
       return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, { method: "GET" }, (data) =>
         jobSchema.parse(data),
+      );
+    },
+
+    rebuildIndex(): Promise<Job> {
+      return request(
+        "/api/v1/jobs/rebuild-index",
+        { method: "POST" },
+        (data) => jobSchema.parse(data),
       );
     },
 

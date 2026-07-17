@@ -245,4 +245,76 @@ describe("Knowledge Base Ops API client", () => {
       message: "duplicate document",
     } satisfies Partial<ApiError>);
   });
+
+  it("uses the real scan, reindex, delete, rebuild, and member-upsert contracts", async () => {
+    const member = {
+      id: "44444444-4444-4444-8444-444444444444",
+      knowledge_base_id: kbId,
+      principal_type: "group",
+      principal_id: "engineering",
+      permission: "editor",
+      created_at: "2026-07-15T00:00:00Z",
+      updated_at: "2026-07-15T00:00:00Z",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = url.includes("/members")
+        ? member
+        : {
+            ...jobRecord(),
+            job_type: url.includes("rebuild-index")
+              ? "vector_index_rebuild"
+              : url.includes("/scan")
+                ? "local_document_scan"
+                : url.includes("/reindex")
+                  ? "document_reindex"
+                  : "document_deletion",
+          };
+      return new Response(JSON.stringify(body), {
+        status: init?.method === "PUT" ? 200 : 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const fetchImpl = fetchMock as unknown as typeof fetch;
+    const api = createApiClient({
+      baseUrl: "http://api.test",
+      getAccessToken: async () => "token",
+      renewAccessToken: async () => null,
+      fetchImpl,
+    });
+
+    await api.scanDocuments({ root_alias: "policies", knowledge_base_id: kbId });
+    await api.reindexDocument(documentId);
+    await api.deleteDocument(documentId);
+    await api.rebuildIndex();
+    await api.upsertKnowledgeBaseMember(kbId, {
+      principal_type: "group",
+      principal_id: "engineering",
+      permission: "editor",
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "http://api.test/api/v1/documents/scan",
+      `http://api.test/api/v1/documents/${documentId}/reindex`,
+      `http://api.test/api/v1/documents/${documentId}`,
+      "http://api.test/api/v1/jobs/rebuild-index",
+      `http://api.test/api/v1/knowledge-bases/${kbId}/members`,
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => (init as RequestInit).method)).toEqual([
+      "POST",
+      "POST",
+      "DELETE",
+      "POST",
+      "PUT",
+    ]);
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
+      root_alias: "policies",
+      knowledge_base_id: kbId,
+    });
+    expect(JSON.parse(String((fetchMock.mock.calls[4][1] as RequestInit).body))).toEqual({
+      principal_type: "group",
+      principal_id: "engineering",
+      permission: "editor",
+    });
+  });
 });
