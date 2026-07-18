@@ -1,10 +1,12 @@
+import { useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "@/i18n";
 import { formatDateTime } from "@/i18n/format";
 import { useAuth } from "@/auth/useAuth";
 import { EmptyState } from "@/components/EmptyState";
+import { Button } from "@/components/Button";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill } from "@/components/StatusPill";
 import { DocumentOperations } from "@/documents/DocumentOperations";
@@ -25,6 +27,34 @@ export function KnowledgeBaseDetailPage() {
   });
   const knowledgeBase = knowledgeBases.data?.find((item) => item.id === knowledgeBaseId);
   const locale = i18n.language as AppLocale;
+  const [principalType, setPrincipalType] = useState<"user" | "group">("user");
+  const [principalId, setPrincipalId] = useState("");
+  const [permission, setPermission] = useState<"reader" | "editor" | "owner">("reader");
+  const [memberValidation, setMemberValidation] = useState<string | null>(null);
+  const memberMutation = useMutation({
+    mutationFn: () =>
+      api.upsertKnowledgeBaseMember(knowledgeBaseId ?? "", {
+        principal_type: principalType,
+        principal_id: principalId.trim(),
+        permission,
+      }),
+    onSuccess: () => {
+      setPrincipalId("");
+      setMemberValidation(null);
+    },
+  });
+
+  function submitMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    memberMutation.reset();
+    const cleanPrincipalId = principalId.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(cleanPrincipalId)) {
+      setMemberValidation(t("knowledgeBases:memberPrincipalValidation"));
+      return;
+    }
+    setMemberValidation(null);
+    memberMutation.mutate();
+  }
 
   if (knowledgeBases.isLoading) {
     return <section className={styles.loading} aria-busy="true">{t("knowledgeBases:loading")}</section>;
@@ -56,6 +86,9 @@ export function KnowledgeBaseDetailPage() {
 
   const access = confirmedKnowledgeBaseAccess(identity, knowledgeBase);
   const canEdit = canEditKnowledgeBase(identity, knowledgeBase);
+  const canManageMembers = Boolean(
+    identity?.is_admin || identity?.user_id === knowledgeBase.created_by,
+  );
   const permissionMessage =
     access === "admin"
       ? t("knowledgeBases:permissionAdmin")
@@ -151,6 +184,72 @@ export function KnowledgeBaseDetailPage() {
         <h2 id="knowledge-base-permission-title">{t("knowledgeBases:permissionTitle")}</h2>
         <p>{permissionMessage}</p>
       </section>
+
+      {canManageMembers ? (
+        <section className={styles.permission} aria-labelledby="knowledge-base-member-title">
+          <div>
+            <h2 id="knowledge-base-member-title">{t("knowledgeBases:memberTitle")}</h2>
+            <p>{t("knowledgeBases:memberDetail")}</p>
+          </div>
+          <form className={styles.memberForm} onSubmit={submitMember}>
+            <div className={styles.formField}>
+              <label htmlFor="member-principal-type">{t("knowledgeBases:memberPrincipalType")}</label>
+              <select
+                id="member-principal-type"
+                value={principalType}
+                onChange={(event) => setPrincipalType(event.target.value as "user" | "group")}
+              >
+                <option value="user">{t("knowledgeBases:memberUser")}</option>
+                <option value="group">{t("knowledgeBases:memberGroup")}</option>
+              </select>
+            </div>
+            <div className={styles.formField}>
+              <label htmlFor="member-principal-id">{t("knowledgeBases:memberPrincipalId")}</label>
+              <input
+                id="member-principal-id"
+                maxLength={128}
+                value={principalId}
+                onChange={(event) => setPrincipalId(event.target.value)}
+              />
+              <span className={styles.fieldHint}>{t("knowledgeBases:memberPrincipalHint")}</span>
+            </div>
+            <div className={styles.formField}>
+              <label htmlFor="member-permission">{t("knowledgeBases:memberPermission")}</label>
+              <select
+                id="member-permission"
+                value={permission}
+                onChange={(event) =>
+                  setPermission(event.target.value as "reader" | "editor" | "owner")
+                }
+              >
+                <option value="reader">reader</option>
+                <option value="editor">editor</option>
+                <option value="owner">owner</option>
+              </select>
+            </div>
+            {memberValidation ? (
+              <p className={styles.validation} role="alert">{memberValidation}</p>
+            ) : null}
+            {memberMutation.isError ? <OperationError error={memberMutation.error} /> : null}
+            {memberMutation.data ? (
+              <p className={styles.successNotice} role="status">
+                {t("knowledgeBases:memberSuccess", {
+                  principal: memberMutation.data.principal_id,
+                  permission: memberMutation.data.permission,
+                })}
+              </p>
+            ) : null}
+            <div className={styles.formActions}>
+              <Button type="submit" disabled={memberMutation.isPending || !principalId.trim()}>
+                {memberMutation.isPending
+                  ? t("knowledgeBases:memberSaving")
+                  : t("knowledgeBases:memberSave")}
+              </Button>
+            </div>
+          </form>
+          <p>{t("knowledgeBases:memberLimitation")}</p>
+        </section>
+      ) : null}
 
       <DocumentOperations knowledgeBase={knowledgeBase} canEdit={canEdit} />
     </div>

@@ -28,6 +28,12 @@ export const systemZh = {
   apiLive: "API 运行正常",
   apiDegraded: "API 状态异常",
   apiStatus: "API {{status}}",
+  indexOperations: "向量索引管理",
+  indexOperationsDetail: "全量重建会由后端创建 Celery 任务并通过新集合切换索引；不会在浏览器进程内执行。",
+  rebuildIndex: "全量重建向量索引",
+  rebuildStarting: "正在创建重建任务…",
+  rebuildConfirm: "确定启动全量向量索引重建吗？系统将阻止并发重建，并在后台切换新索引。",
+  rebuildAdminOnly: "只有管理员可以启动全量索引重建。",
 } as const;
 
 export type SystemDict = { readonly [K in keyof typeof systemZh]: string };

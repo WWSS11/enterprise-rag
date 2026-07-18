@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "@/i18n";
@@ -7,6 +8,7 @@ import { Button } from "@/components/Button";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill, type StatusTone } from "@/components/StatusPill";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
+import type { Job } from "@/api/types";
 import styles from "./JobStatus.module.css";
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
@@ -34,7 +36,15 @@ function typeLabel(
   return t("jobs:typeUnknown", { type });
 }
 
-export function JobStatus({ jobId, onForget }: { jobId: string; onForget?: () => void }) {
+export function JobStatus({
+  jobId,
+  onForget,
+  onTerminal,
+}: {
+  jobId: string;
+  onForget?: () => void;
+  onTerminal?: (job: Job) => void;
+}) {
   const { t, i18n } = useTranslation(["jobs", "common"]);
   const { api } = useAuth();
   const visible = usePageVisibility();
@@ -47,7 +57,16 @@ export function JobStatus({ jobId, onForget }: { jobId: string; onForget?: () =>
     },
     refetchIntervalInBackground: false,
   });
+  const notifiedTerminalJobRef = useRef<string | null>(null);
   const locale = i18n.language as AppLocale;
+
+  useEffect(() => {
+    if (!job.data || !TERMINAL_STATUSES.has(job.data.status)) return;
+    const notificationKey = `${job.data.id}:${job.data.status}:${job.data.updated_at}`;
+    if (notifiedTerminalJobRef.current === notificationKey) return;
+    notifiedTerminalJobRef.current = notificationKey;
+    onTerminal?.(job.data);
+  }, [job.data, onTerminal]);
 
   if (job.isLoading) {
     return (

@@ -30,4 +30,10 @@ export const systemEn = {
   apiLive: "API healthy",
   apiDegraded: "API degraded",
   apiStatus: "API {{status}}",
+  indexOperations: "Vector-index operations",
+  indexOperationsDetail: "A full rebuild creates a Celery job and switches to a newly built collection; it does not run in the browser process.",
+  rebuildIndex: "Rebuild the full vector index",
+  rebuildStarting: "Creating rebuild job…",
+  rebuildConfirm: "Start a full vector-index rebuild? The backend prevents concurrent rebuilds and switches the new index in the background.",
+  rebuildAdminOnly: "Only administrators can start a full index rebuild.",
 } as const satisfies SystemDict;
