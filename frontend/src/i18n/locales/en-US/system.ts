@@ -36,4 +36,9 @@ export const systemEn = {
   rebuildStarting: "Creating rebuild job…",
   rebuildConfirm: "Start a full vector-index rebuild? The backend prevents concurrent rebuilds and switches the new index in the background.",
   rebuildAdminOnly: "Only administrators can start a full index rebuild.",
+  auditTitle: "Recent audit records",
+  auditDetail: "Administrator-only server audit history for the current tenant.",
+  auditRefresh: "Refresh audit",
+  auditLoading: "Loading audit records…",
+  auditEmpty: "No audit records.",
 } as const satisfies SystemDict;

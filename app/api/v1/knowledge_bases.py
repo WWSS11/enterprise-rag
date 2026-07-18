@@ -13,6 +13,7 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseCreate,
     KnowledgeBaseMemberRead,
     KnowledgeBaseMemberUpsert,
+    KnowledgeBasePermissionRead,
     KnowledgeBaseRead,
 )
 from app.security.identity import RequestIdentity
@@ -77,6 +78,60 @@ async def list_knowledge_bases(
     knowledge_bases = await knowledge_base_service.list_accessible_identity(db, identity)
     await db.commit()
     return knowledge_bases
+
+
+@router.get(
+    "/{knowledge_base_id}/members", response_model=list[KnowledgeBaseMemberRead]
+)
+async def list_members(
+    knowledge_base_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> list[KnowledgeBaseMember]:
+    try:
+        await knowledge_base_service.authorize_identity(
+            db, identity, knowledge_base_id, required_permission="owner"
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return list(
+        (
+            await db.execute(
+                select(KnowledgeBaseMember)
+                .where(KnowledgeBaseMember.knowledge_base_id == knowledge_base_id)
+                .order_by(
+                    KnowledgeBaseMember.principal_type,
+                    KnowledgeBaseMember.principal_id,
+                )
+            )
+        ).scalars()
+    )
+
+
+@router.get(
+    "/{knowledge_base_id}/permissions/me", response_model=KnowledgeBasePermissionRead
+)
+async def get_current_permission(
+    knowledge_base_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBasePermissionRead:
+    try:
+        knowledge_base = await knowledge_base_service.authorize_identity(
+            db, identity, knowledge_base_id
+        )
+    except (LookupError, PermissionError) as exc:
+        raise HTTPException(status_code=404, detail="knowledge base not found") from exc
+    permission, source = await knowledge_base_service.effective_permission(
+        db, identity, knowledge_base
+    )
+    return KnowledgeBasePermissionRead(
+        knowledge_base_id=knowledge_base.id,
+        permission=permission,
+        source=source,
+    )
 
 
 @router.put("/{knowledge_base_id}/members", response_model=KnowledgeBaseMemberRead)

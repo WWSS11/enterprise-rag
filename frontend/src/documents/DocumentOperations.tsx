@@ -10,7 +10,6 @@ import { EmptyState } from "@/components/EmptyState";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill, type StatusTone } from "@/components/StatusPill";
 import { JobStatus } from "@/jobs/JobStatus";
-import { rememberJobId } from "@/jobs/jobStorage";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
 import styles from "./DocumentOperations.module.css";
 
@@ -159,7 +158,6 @@ export function DocumentOperations({
         (progress) => setUploadProgress(progress.percent),
         controller.signal,
       );
-      rememberJobId(result.job_id);
       setAccepted(result);
       setUploadState("accepted");
       setFile(null);
@@ -191,7 +189,6 @@ export function DocumentOperations({
         root_alias: rootAlias,
         knowledge_base_id: knowledgeBase.id,
       });
-      rememberJobId(job.id);
       setScanJobId(job.id);
     } catch (error) {
       setScanError(error);
@@ -216,7 +213,6 @@ export function DocumentOperations({
         action === "reindex"
           ? await api.reindexDocument(document.id)
           : await api.deleteDocument(document.id);
-      rememberJobId(job.id);
       setDocumentJobs((current) => ({ ...current, [document.id]: job.id }));
       await queryClient.invalidateQueries({ queryKey: ["documents", knowledgeBase.id] });
     } catch (error) {

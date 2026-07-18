@@ -33,8 +33,7 @@ export function EvaluationsPage() {
 
       <section className={styles.noticeSection} aria-labelledby="evaluation-history-scope-title">
         <h2 id="evaluation-history-scope-title">{t("evaluationRuns:runsTitle")}</h2>
-        <p>{t("evaluationRuns:sessionScope")}</p>
-        <p>{t("evaluationRuns:sessionStorageNote")}</p>
+        <p>{t("evaluationRuns:serverScope")}</p>
       </section>
 
       {datasets.isLoading ? <section className={styles.loading} aria-busy="true">{t("evaluations:loading")}</section> : null}

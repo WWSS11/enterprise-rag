@@ -9,11 +9,17 @@ import {
   knowledgeBaseSchema,
   knowledgeBaseCreateSchema,
   knowledgeBaseMemberSchema,
+  knowledgeBaseMemberListSchema,
+  knowledgeBasePermissionSchema,
   knowledgeBaseMemberUpsertSchema,
   documentListSchema,
   documentUploadAcceptedSchema,
   localScanRequestSchema,
   jobSchema,
+  jobPageSchema,
+  conversationPageSchema,
+  chatMessagePageSchema,
+  auditLogPageSchema,
   chatRequestSchema,
   evaluationDatasetCreateSchema,
   evaluationDatasetListSchema,
@@ -24,6 +30,7 @@ import {
   evaluationCaseSchema,
   evaluationRunCreateSchema,
   evaluationRunSchema,
+  evaluationRunPageSchema,
   evaluationReportSchema,
   evaluationRunComparisonRequestSchema,
   evaluationRunComparisonSchema,
@@ -35,10 +42,15 @@ import {
   type KnowledgeBaseCreate,
   type KnowledgeBaseMember,
   type KnowledgeBaseMemberUpsert,
+  type KnowledgeBasePermission,
   type DocumentRecord,
   type DocumentUploadAccepted,
   type LocalScanRequest,
   type Job,
+  type JobPage,
+  type ConversationPage,
+  type ChatMessagePage,
+  type AuditLogPage,
   type ChatRequest,
   type EvaluationDataset,
   type EvaluationDatasetCreate,
@@ -47,6 +59,7 @@ import {
   type EvaluationCaseCreate,
   type EvaluationRun,
   type EvaluationRunCreate,
+  type EvaluationRunPage,
   type EvaluationReport,
   type EvaluationRunComparison,
   type EvaluationRunComparisonRequest,
@@ -75,6 +88,15 @@ function joinUrl(base: string, path: string): string {
   const normalizedBase = base.replace(/\/+$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBase}${normalizedPath}`;
+}
+
+function withQuery(path: string, values: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  const suffix = query.toString();
+  return suffix ? `${path}?${suffix}` : path;
 }
 
 export function createApiClient(options: ApiClientOptions) {
@@ -412,6 +434,22 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    listKnowledgeBaseMembers(knowledgeBaseId: string): Promise<KnowledgeBaseMember[]> {
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/members`,
+        { method: "GET" },
+        (data) => knowledgeBaseMemberListSchema.parse(data),
+      );
+    },
+
+    getKnowledgeBasePermission(knowledgeBaseId: string): Promise<KnowledgeBasePermission> {
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/permissions/me`,
+        { method: "GET" },
+        (data) => knowledgeBasePermissionSchema.parse(data),
+      );
+    },
+
     listDocuments(knowledgeBaseId?: string): Promise<DocumentRecord[]> {
       const query = knowledgeBaseId
         ? `?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`
@@ -454,6 +492,23 @@ export function createApiClient(options: ApiClientOptions) {
       return request(`/api/v1/jobs/${encodeURIComponent(jobId)}`, { method: "GET" }, (data) =>
         jobSchema.parse(data),
       );
+    },
+
+    listJobs(filters: {
+      status?: string;
+      jobType?: string;
+      knowledgeBaseId?: string;
+      limit?: number;
+      offset?: number;
+    } = {}): Promise<JobPage> {
+      const path = withQuery("/api/v1/jobs", {
+        status: filters.status,
+        job_type: filters.jobType,
+        knowledge_base_id: filters.knowledgeBaseId,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return request(path, { method: "GET" }, (data) => jobPageSchema.parse(data));
     },
 
     rebuildIndex(): Promise<Job> {
@@ -550,6 +605,66 @@ export function createApiClient(options: ApiClientOptions) {
         { method: "GET" },
         (data) => evaluationRunSchema.parse(data),
       );
+    },
+
+    listEvaluationRuns(filters: {
+      datasetId?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    } = {}): Promise<EvaluationRunPage> {
+      const path = withQuery("/api/v1/evaluations/runs", {
+        dataset_id: filters.datasetId,
+        status: filters.status,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return request(path, { method: "GET" }, (data) => evaluationRunPageSchema.parse(data));
+    },
+
+    listConversations(filters: {
+      knowledgeBaseId?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    } = {}): Promise<ConversationPage> {
+      const path = withQuery("/api/v1/conversations", {
+        knowledge_base_id: filters.knowledgeBaseId,
+        status: filters.status,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return request(path, { method: "GET" }, (data) => conversationPageSchema.parse(data));
+    },
+
+    listConversationMessages(
+      conversationId: string,
+      filters: { limit?: number; offset?: number } = {},
+    ): Promise<ChatMessagePage> {
+      const path = withQuery(
+        `/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
+        filters,
+      );
+      return request(path, { method: "GET" }, (data) => chatMessagePageSchema.parse(data));
+    },
+
+    listAuditLogs(filters: {
+      action?: string;
+      resourceType?: string;
+      resourceId?: string;
+      userId?: string;
+      limit?: number;
+      offset?: number;
+    } = {}): Promise<AuditLogPage> {
+      const path = withQuery("/api/v1/audit-logs", {
+        action: filters.action,
+        resource_type: filters.resourceType,
+        resource_id: filters.resourceId,
+        user_id: filters.userId,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return request(path, { method: "GET" }, (data) => auditLogPageSchema.parse(data));
     },
 
     getEvaluationRunReport(runId: string): Promise<EvaluationReport> {

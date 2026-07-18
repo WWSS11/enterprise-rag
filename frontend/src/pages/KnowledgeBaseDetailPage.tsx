@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "@/i18n";
 import { formatDateTime } from "@/i18n/format";
@@ -10,22 +10,31 @@ import { Button } from "@/components/Button";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill } from "@/components/StatusPill";
 import { DocumentOperations } from "@/documents/DocumentOperations";
-import {
-  canEditKnowledgeBase,
-  confirmedKnowledgeBaseAccess,
-} from "@/knowledgeBases/permissions";
 import styles from "./KnowledgeBaseOps.module.css";
 
 export function KnowledgeBaseDetailPage() {
   const { knowledgeBaseId } = useParams<{ knowledgeBaseId: string }>();
   const location = useLocation();
   const { t, i18n } = useTranslation(["knowledgeBases", "documents", "common"]);
-  const { api, identity } = useAuth();
+  const { api } = useAuth();
+  const queryClient = useQueryClient();
   const knowledgeBases = useQuery({
     queryKey: ["knowledge-bases"],
     queryFn: () => api.listKnowledgeBases(),
   });
   const knowledgeBase = knowledgeBases.data?.find((item) => item.id === knowledgeBaseId);
+  const effectivePermission = useQuery({
+    queryKey: ["knowledge-base-permission", knowledgeBaseId],
+    queryFn: () => api.getKnowledgeBasePermission(knowledgeBaseId ?? ""),
+    enabled: Boolean(knowledgeBaseId && knowledgeBase),
+  });
+  const canEdit = effectivePermission.data?.permission === "editor" || effectivePermission.data?.permission === "owner";
+  const canManageMembers = effectivePermission.data?.permission === "owner";
+  const members = useQuery({
+    queryKey: ["knowledge-base-members", knowledgeBaseId],
+    queryFn: () => api.listKnowledgeBaseMembers(knowledgeBaseId ?? ""),
+    enabled: Boolean(knowledgeBaseId && canManageMembers),
+  });
   const locale = i18n.language as AppLocale;
   const [principalType, setPrincipalType] = useState<"user" | "group">("user");
   const [principalId, setPrincipalId] = useState("");
@@ -38,9 +47,10 @@ export function KnowledgeBaseDetailPage() {
         principal_id: principalId.trim(),
         permission,
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setPrincipalId("");
       setMemberValidation(null);
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-base-members", knowledgeBaseId] });
     },
   });
 
@@ -84,19 +94,12 @@ export function KnowledgeBaseDetailPage() {
     );
   }
 
-  const access = confirmedKnowledgeBaseAccess(identity, knowledgeBase);
-  const canEdit = canEditKnowledgeBase(identity, knowledgeBase);
-  const canManageMembers = Boolean(
-    identity?.is_admin || identity?.user_id === knowledgeBase.created_by,
-  );
-  const permissionMessage =
-    access === "admin"
-      ? t("knowledgeBases:permissionAdmin")
-      : access === "creator"
-        ? t("knowledgeBases:permissionCreator")
-        : access === "tenant-editor"
-          ? t("knowledgeBases:permissionTenantEditor")
-          : t("knowledgeBases:permissionRestrictedUnknown");
+  const permissionMessage = effectivePermission.data
+    ? t("knowledgeBases:permissionEffective", {
+        permission: effectivePermission.data.permission,
+        source: effectivePermission.data.source,
+      })
+    : t("knowledgeBases:permissionLoading");
   const created = Boolean((location.state as { created?: boolean } | null)?.created);
 
   return (
@@ -191,6 +194,10 @@ export function KnowledgeBaseDetailPage() {
             <h2 id="knowledge-base-member-title">{t("knowledgeBases:memberTitle")}</h2>
             <p>{t("knowledgeBases:memberDetail")}</p>
           </div>
+          {members.isLoading ? <p>{t("knowledgeBases:memberLoading")}</p> : null}
+          {members.isError ? <OperationError error={members.error} onRetry={() => void members.refetch()} /> : null}
+          {members.data?.length === 0 ? <p>{t("knowledgeBases:memberEmpty")}</p> : null}
+          {members.data?.length ? <ul className={styles.memberList}>{members.data.map((member) => <li key={member.id}><code>{member.principal_id}</code><span>{member.principal_type}</span><strong>{member.permission}</strong></li>)}</ul> : null}
           <form className={styles.memberForm} onSubmit={submitMember}>
             <div className={styles.formField}>
               <label htmlFor="member-principal-type">{t("knowledgeBases:memberPrincipalType")}</label>

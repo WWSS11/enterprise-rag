@@ -43,6 +43,7 @@ class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    knowledge_base_id: UUID | None
     document_id: UUID | None
     task_id: str | None
     job_type: str
@@ -52,3 +53,10 @@ class JobRead(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class JobPage(BaseModel):
+    items: list[JobRead]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)

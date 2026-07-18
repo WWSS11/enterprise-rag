@@ -11,7 +11,6 @@ import { EmptyState } from "@/components/EmptyState";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill } from "@/components/StatusPill";
 import { EvaluationCaseForm } from "@/evaluations/EvaluationCaseForm";
-import { forgetRunId, listRunIds, rememberRunId } from "@/evaluations/runStorage";
 import { canEditKnowledgeBase } from "@/knowledgeBases/permissions";
 import styles from "./EvaluationConsole.module.css";
 
@@ -25,12 +24,6 @@ export function EvaluationDatasetPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const locale = i18n.language as AppLocale;
-  const runStorageScope = {
-    tenant_id: identity?.tenant_id ?? "",
-    user_id: identity?.user_id ?? "",
-    dataset_id: datasetId,
-  };
-  const [runIds, setRunIds] = useState(() => listRunIds(runStorageScope));
   const [pastedRunId, setPastedRunId] = useState("");
   const [runValidation, setRunValidation] = useState<string | null>(null);
 
@@ -38,6 +31,7 @@ export function EvaluationDatasetPage() {
   const knowledgeBases = useQuery({ queryKey: ["knowledge-bases"], queryFn: () => api.listKnowledgeBases() });
   const cases = useQuery({ queryKey: ["evaluation-cases", datasetId], queryFn: () => api.listEvaluationCases(datasetId), enabled: Boolean(dataset.data) });
   const documents = useQuery({ queryKey: ["documents", dataset.data?.knowledge_base_id], queryFn: () => api.listDocuments(dataset.data!.knowledge_base_id), enabled: Boolean(dataset.data) });
+  const runs = useQuery({ queryKey: ["evaluation-runs", datasetId], queryFn: () => api.listEvaluationRuns({ datasetId, limit: 50 }), enabled: Boolean(dataset.data) });
   const knowledgeBase = knowledgeBases.data?.find((item) => item.id === dataset.data?.knowledge_base_id);
   const canEdit = Boolean(knowledgeBase && canEditKnowledgeBase(identity, knowledgeBase));
   const readyDocuments = documents.data?.filter((item) => item.status === "ready") ?? [];
@@ -48,13 +42,12 @@ export function EvaluationDatasetPage() {
   });
   const startRun = useMutation({
     mutationFn: () => api.createEvaluationRun({ dataset_id: datasetId }),
-    onSuccess: (run) => { setRunIds(rememberRunId(runStorageScope, run.id)); navigate(`/app/evaluations/runs/${run.id}`, { state: { queued: true } }); },
+    onSuccess: async (run) => { await queryClient.invalidateQueries({ queryKey: ["evaluation-runs", datasetId] }); navigate(`/app/evaluations/runs/${run.id}`, { state: { queued: true } }); },
   });
   const openRun = useMutation({
     mutationFn: (runId: string) => api.getEvaluationRun(runId),
     onSuccess: (run) => {
       if (run.dataset_id !== datasetId) { setRunValidation(t("qualityGates:validationSameDataset")); return; }
-      setRunIds(rememberRunId(runStorageScope, run.id));
       navigate(`/app/evaluations/runs/${run.id}`);
     },
   });
@@ -100,7 +93,7 @@ export function EvaluationDatasetPage() {
 
       <section className={styles.panel} aria-labelledby="start-run-title"><div className={styles.sectionHeader}><div><h2 id="start-run-title">{t("evaluationRuns:startTitle")}</h2><p>{t("evaluationRuns:startDetail")}</p></div>{canEdit ? <Button type="button" disabled={startRun.isPending || !cases.data?.length} onClick={() => startRun.mutate()}>{startRun.isPending ? t("evaluationRuns:starting") : t("evaluationRuns:start")}</Button> : null}</div>{!canEdit ? <p className={styles.notice}>{t("evaluationRuns:permissionStartRequiresEditor")}</p> : null}{cases.data?.length === 0 ? <p className={styles.validation}>{t("evaluationRuns:datasetHasNoCases")}</p> : null}{startRun.isError ? <OperationError error={startRun.error} onRetry={() => startRun.mutate()} /> : null}</section>
 
-      <section className={styles.panel} aria-labelledby="known-runs-title"><div className={styles.sectionHeader}><div><h2 id="known-runs-title">{t("evaluationRuns:runsTitle")}</h2><p>{t("evaluationRuns:sessionScope")}</p></div></div><form className={styles.inlineForm} onSubmit={submitRunId}><div className={styles.formField}><label htmlFor="existing-run-id">{t("evaluationRuns:pasteRunLabel")}</label><input id="existing-run-id" value={pastedRunId} onChange={(event) => setPastedRunId(event.target.value)} placeholder={t("evaluationRuns:pasteRunPlaceholder")} /></div><Button type="submit" variant="secondary" disabled={openRun.isPending}>{t("evaluationRuns:openRun")}</Button></form>{runValidation ? <p className={styles.validation}>{runValidation}</p> : null}{openRun.isError ? <OperationError error={openRun.error} onRetry={() => openRun.mutate(pastedRunId.trim())} /> : null}{runIds.length === 0 ? <p className={styles.muted}>{t("evaluationRuns:emptyDetail")}</p> : <ul className={styles.runIdList}>{runIds.map((runId) => <li key={runId}><Link to={`/app/evaluations/runs/${runId}`}><code>{runId}</code></Link><Button type="button" variant="ghost" onClick={() => setRunIds(forgetRunId(runStorageScope, runId))}>{t("evaluationRuns:forgetRun")}</Button></li>)}</ul>}</section>
+      <section className={styles.panel} aria-labelledby="known-runs-title"><div className={styles.sectionHeader}><div><h2 id="known-runs-title">{t("evaluationRuns:runsTitle")}</h2><p>{t("evaluationRuns:serverScope")}</p></div><Button type="button" variant="secondary" onClick={() => void runs.refetch()}>{t("evaluationRuns:refresh")}</Button></div><form className={styles.inlineForm} onSubmit={submitRunId}><div className={styles.formField}><label htmlFor="existing-run-id">{t("evaluationRuns:pasteRunLabel")}</label><input id="existing-run-id" value={pastedRunId} onChange={(event) => setPastedRunId(event.target.value)} placeholder={t("evaluationRuns:pasteRunPlaceholder")} /></div><Button type="submit" variant="secondary" disabled={openRun.isPending}>{t("evaluationRuns:openRun")}</Button></form>{runValidation ? <p className={styles.validation}>{runValidation}</p> : null}{openRun.isError ? <OperationError error={openRun.error} onRetry={() => openRun.mutate(pastedRunId.trim())} /> : null}{runs.isError ? <OperationError error={runs.error} onRetry={() => void runs.refetch()} /> : null}{runs.isLoading ? <p className={styles.loading}>{t("evaluationRuns:loading")}</p> : null}{runs.data?.items.length === 0 ? <p className={styles.muted}>{t("evaluationRuns:emptyDetail")}</p> : <ul className={styles.runIdList}>{runs.data?.items.map((run) => <li key={run.id}><Link to={`/app/evaluations/runs/${run.id}`}><code>{run.id}</code><span>{t(`evaluationRuns:status${run.status.charAt(0).toUpperCase()}${run.status.slice(1)}`, { defaultValue: run.status })}</span></Link></li>)}</ul>}</section>
     </div>
   );
 }

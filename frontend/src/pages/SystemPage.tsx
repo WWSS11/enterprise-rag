@@ -11,8 +11,9 @@ import { TechnicalDetails } from "@/components/TechnicalDetails";
 import { Button } from "@/components/Button";
 import { OperationError } from "@/components/OperationError";
 import { JobStatus } from "@/jobs/JobStatus";
-import { rememberJobId } from "@/jobs/jobStorage";
 import { localizeApiError } from "@/i18n/apiError";
+import type { AppLocale } from "@/i18n";
+import { formatDateTime } from "@/i18n/format";
 import styles from "./SystemPage.module.css";
 
 function tone(status: string | undefined, error: boolean, loading: boolean): StatusTone {
@@ -24,13 +25,12 @@ function tone(status: string | undefined, error: boolean, loading: boolean): Sta
 }
 
 export function SystemPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { api, identity } = useAuth();
   const [rebuildJobId, setRebuildJobId] = useState<string | null>(null);
   const rebuild = useMutation({
     mutationFn: () => api.rebuildIndex(),
     onSuccess: (job) => {
-      rememberJobId(job.id);
       setRebuildJobId(job.id);
     },
   });
@@ -52,6 +52,12 @@ export function SystemPage() {
     refetchInterval: 30_000,
     retry: 0,
   });
+  const auditLogs = useQuery({
+    queryKey: ["audit-logs", "recent"],
+    queryFn: () => api.listAuditLogs({ limit: 20 }),
+    enabled: Boolean(identity?.is_admin),
+  });
+  const locale = i18n.language as AppLocale;
 
   const readyError = ready.error;
   const readyRequestId = isApiError(readyError) ? readyError.requestId : null;
@@ -230,6 +236,34 @@ export function SystemPage() {
           ) : null}
           {rebuildJobId ? <JobStatus jobId={rebuildJobId} /> : null}
         </article>
+
+        {identity?.is_admin ? (
+          <article className={`${styles.card} ${styles.auditCard}`}>
+            <div className={styles.cardHead}>
+              <div>
+                <h2 className={styles.cardTitle}>{t("system:auditTitle")}</h2>
+                <p className={styles.muted}>{t("system:auditDetail")}</p>
+              </div>
+              <Button type="button" variant="secondary" onClick={() => void auditLogs.refetch()}>
+                {t("system:auditRefresh")}
+              </Button>
+            </div>
+            {auditLogs.isLoading ? <p>{t("system:auditLoading")}</p> : null}
+            {auditLogs.isError ? <OperationError error={auditLogs.error} onRetry={() => void auditLogs.refetch()} /> : null}
+            {auditLogs.data?.items.length === 0 ? <p className={styles.muted}>{t("system:auditEmpty")}</p> : null}
+            {auditLogs.data?.items.length ? (
+              <ul className={styles.auditList}>
+                {auditLogs.data.items.map((entry) => (
+                  <li key={entry.id}>
+                    <div><strong>{entry.action}</strong><time>{formatDateTime(locale, entry.created_at)}</time></div>
+                    <div><code>{entry.resource_type}</code>{entry.resource_id ? <code>{entry.resource_id}</code> : null}</div>
+                    <div><span>{entry.user_id || "—"}</span>{entry.request_id ? <code>{entry.request_id}</code> : null}</div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </article>
+        ) : null}
       </section>
     </div>
   );

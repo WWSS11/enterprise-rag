@@ -109,6 +109,7 @@ async def discover_local_documents(
             task_id = str(uuid4())
             job = IngestionJob(
                 tenant_id=tenant_id,
+                knowledge_base_id=knowledge_base_id,
                 document_id=document.id,
                 task_id=task_id,
                 job_type="document_ingestion",

@@ -203,10 +203,12 @@ describe("Knowledge Base Ops pages", () => {
     expect(screen.getByText("knowledge-base slug already exists")).toBeVisible();
   });
 
-  it("hides editor controls when restricted membership permission is unknowable", async () => {
+  it("uses the server-confirmed restricted membership permission", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.includes("/documents") ? [] : [kb()];
+      const body = url.endsWith("/permissions/me")
+        ? { knowledge_base_id: kbId, permission: "reader", source: "membership" }
+        : url.includes("/documents") ? [] : [kb()];
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -220,7 +222,7 @@ describe("Knowledge Base Ops pages", () => {
       { route: `/app/knowledge-bases/${kbId}` },
     );
 
-    expect(await screen.findByText(/成员权限级别/)).toBeVisible();
+    expect(await screen.findByText(/reader/)).toBeVisible();
     expect(screen.getByRole("heading", { name: "当前仅可查看" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "上传并创建入库任务" })).toBeNull();
   });
@@ -228,9 +230,15 @@ describe("Knowledge Base Ops pages", () => {
   it("lets a confirmed owner upsert a real user or group grant", async () => {
     const user = userEvent.setup();
     const memberId = "77777777-7777-4777-8777-777777777777";
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith(`/knowledge-bases/${kbId}/members`)) {
+      if (url.endsWith("/permissions/me")) {
+        return new Response(
+          JSON.stringify({ knowledge_base_id: kbId, permission: "owner", source: "creator" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith(`/knowledge-bases/${kbId}/members`) && init?.method === "PUT") {
         return new Response(
           JSON.stringify({
             id: memberId,
@@ -243,6 +251,12 @@ describe("Knowledge Base Ops pages", () => {
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
+      }
+      if (url.endsWith(`/knowledge-bases/${kbId}/members`)) {
+        return new Response("[]", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }
       const body = url.includes("/documents") ? [] : [kb()];
       return new Response(JSON.stringify(body), {
@@ -269,8 +283,8 @@ describe("Knowledge Base Ops pages", () => {
     await user.click(screen.getByRole("button", { name: "保存授权" }));
 
     expect(await screen.findByText("已将 engineering 的权限设置为 editor。")).toBeVisible();
-    const memberCall = fetchMock.mock.calls.find(([url]) =>
-      String(url).endsWith(`/knowledge-bases/${kbId}/members`),
+    const memberCall = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).endsWith(`/knowledge-bases/${kbId}/members`) && init?.method === "PUT",
     );
     expect(memberCall).toBeDefined();
     expect((memberCall?.[1] as RequestInit).method).toBe("PUT");

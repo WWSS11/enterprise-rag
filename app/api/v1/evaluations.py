@@ -1,6 +1,6 @@
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from app.schemas.evaluation import (
     EvaluationRunComparison,
     EvaluationRunComparisonRequest,
     EvaluationRunCreate,
+    EvaluationRunPage,
     EvaluationRunRead,
 )
 from app.security.identity import RequestIdentity
@@ -337,6 +338,45 @@ async def create_run(
         await db.commit()
         raise HTTPException(status_code=503, detail="failed to dispatch evaluation task") from exc
     return run
+
+
+@router.get("/runs", response_model=EvaluationRunPage)
+async def list_runs(
+    dataset_id: UUID | None = None,
+    run_status: str | None = Query(default=None, alias="status", max_length=32),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationRunPage:
+    conditions = [EvaluationRun.tenant_id == identity.tenant_id]
+    if dataset_id is not None:
+        dataset = await _authorize_dataset(db, dataset_id, identity)
+        conditions.append(EvaluationRun.dataset_id == dataset.id)
+    elif not identity.is_admin:
+        accessible = await knowledge_base_service.list_accessible_identity(db, identity)
+        conditions.append(
+            EvaluationRun.knowledge_base_id.in_([item.id for item in accessible])
+        )
+    if run_status:
+        conditions.append(EvaluationRun.status == run_status)
+
+    total = int(
+        await db.scalar(select(func.count()).select_from(EvaluationRun).where(*conditions)) or 0
+    )
+    items = list(
+        (
+            await db.execute(
+                select(EvaluationRun)
+                .where(*conditions)
+                .order_by(EvaluationRun.created_at.desc(), EvaluationRun.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).scalars()
+    )
+    await db.commit()
+    return EvaluationRunPage(items=items, total=total, limit=limit, offset=offset)
 
 
 async def _authorize_run(

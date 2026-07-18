@@ -38,10 +38,12 @@ function typeLabel(
 
 export function JobStatus({
   jobId,
+  initialJob,
   onForget,
   onTerminal,
 }: {
   jobId: string;
+  initialJob?: Job;
   onForget?: () => void;
   onTerminal?: (job: Job) => void;
 }) {
@@ -51,6 +53,7 @@ export function JobStatus({
   const job = useQuery({
     queryKey: ["jobs", jobId],
     queryFn: () => api.getJob(jobId),
+    initialData: initialJob,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return visible && (!status || !TERMINAL_STATUSES.has(status)) ? 2500 : false;

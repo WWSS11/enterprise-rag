@@ -99,6 +99,27 @@ test.describe("Chat + Evidence Desk mocked SSE", () => {
         body: sse,
       });
     });
+    await page.route("**/api/v1/conversations**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              id: conversationId,
+              knowledge_base_id: kbId,
+              title: "访问需要什么审批？",
+              status: "active",
+              created_at: "2026-07-14T00:00:00Z",
+              updated_at: "2026-07-14T00:00:00Z",
+            },
+          ],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        }),
+      }),
+    );
     await seedMockAuthenticatedSession(page);
   });
 

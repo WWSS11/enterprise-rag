@@ -238,6 +238,12 @@ class IngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_ingestion_jobs_tenant_status", "tenant_id", "status"),
         Index(
+            "ix_ingestion_jobs_tenant_kb_created",
+            "tenant_id",
+            "knowledge_base_id",
+            "created_at",
+        ),
+        Index(
             "uq_ingestion_jobs_active_document",
             "document_id",
             unique=True,
@@ -256,6 +262,9 @@ class IngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False)
+    knowledge_base_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL")
+    )
     document_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("documents.id", ondelete="SET NULL")
     )

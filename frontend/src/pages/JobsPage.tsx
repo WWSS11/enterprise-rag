@@ -1,13 +1,19 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/auth/useAuth";
 import { EmptyState } from "@/components/EmptyState";
+import { OperationError } from "@/components/OperationError";
 import { JobStatus } from "@/jobs/JobStatus";
-import { forgetJobId, readKnownJobIds } from "@/jobs/jobStorage";
 import styles from "./JobsPage.module.css";
 
 export function JobsPage() {
   const { t } = useTranslation("jobs");
-  const [jobIds, setJobIds] = useState(readKnownJobIds);
+  const { api } = useAuth();
+  const jobs = useQuery({
+    queryKey: ["jobs", "history"],
+    queryFn: () => api.listJobs({ limit: 50 }),
+    refetchInterval: 5000,
+  });
 
   return (
     <div className={styles.page}>
@@ -19,9 +25,11 @@ export function JobsPage() {
         </div>
       </header>
 
-      <p className={styles.scope}>{t("sessionScope")}</p>
+      <p className={styles.scope}>{t("serverScope")}</p>
 
-      {jobIds.length === 0 ? (
+      {jobs.isError ? <OperationError error={jobs.error} onRetry={() => void jobs.refetch()} /> : null}
+      {jobs.isLoading ? <p>{t("loading")}</p> : null}
+      {jobs.data?.items.length === 0 ? (
         <EmptyState
           kicker={t("kicker")}
           title={t("emptyTitle")}
@@ -30,11 +38,12 @@ export function JobsPage() {
         />
       ) : (
         <section className={styles.list} aria-label={t("title")}>
-          {jobIds.map((jobId) => (
+          {jobs.data?.items.map((job) => (
             <JobStatus
-              key={jobId}
-              jobId={jobId}
-              onForget={() => setJobIds(forgetJobId(jobId))}
+              key={job.id}
+              jobId={job.id}
+              initialJob={job}
+              onTerminal={() => void jobs.refetch()}
             />
           ))}
         </section>

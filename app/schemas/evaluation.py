@@ -219,6 +219,13 @@ class EvaluationRunRead(BaseModel):
     updated_at: datetime
 
 
+class EvaluationRunPage(BaseModel):
+    items: list[EvaluationRunRead]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
 class EvaluationResultRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
