@@ -317,4 +317,55 @@ describe("Knowledge Base Ops API client", () => {
       permission: "editor",
     });
   });
+
+  it("uses real knowledge-base lifecycle and member-revocation contracts", async () => {
+    const memberId = "44444444-4444-4444-8444-444444444444";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("include_archived=true")) {
+        return new Response(JSON.stringify([knowledgeBase()]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify(knowledgeBase()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const api = createApiClient({
+      baseUrl: "http://api.test",
+      getAccessToken: async () => "token",
+      renewAccessToken: async () => null,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await api.listKnowledgeBases({ includeArchived: true });
+    await api.getKnowledgeBase(kbId);
+    await api.updateKnowledgeBase(kbId, {
+      name: "Security policies",
+      description: null,
+      access_mode: "tenant",
+    });
+    await api.archiveKnowledgeBase(kbId);
+    await api.restoreKnowledgeBase(kbId);
+    await api.deleteKnowledgeBaseMember(kbId, memberId);
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "http://api.test/api/v1/knowledge-bases?include_archived=true",
+      `http://api.test/api/v1/knowledge-bases/${kbId}`,
+      `http://api.test/api/v1/knowledge-bases/${kbId}`,
+      `http://api.test/api/v1/knowledge-bases/${kbId}/archive`,
+      `http://api.test/api/v1/knowledge-bases/${kbId}/restore`,
+      `http://api.test/api/v1/knowledge-bases/${kbId}/members/${memberId}`,
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => (init as RequestInit).method)).toEqual([
+      "GET", "GET", "PATCH", "POST", "POST", "DELETE",
+    ]);
+    expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({
+      name: "Security policies",
+      description: null,
+      access_mode: "tenant",
+    });
+  });
 });

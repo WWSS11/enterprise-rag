@@ -47,6 +47,13 @@ export const knowledgeBaseCreateSchema = z.object({
 });
 export type KnowledgeBaseCreate = z.infer<typeof knowledgeBaseCreateSchema>;
 
+export const knowledgeBaseUpdateSchema = z.object({
+  name: z.string().min(1).max(255).optional(),
+  description: z.string().max(4000).nullable().optional(),
+  access_mode: z.enum(["tenant", "restricted"]).optional(),
+});
+export type KnowledgeBaseUpdate = z.infer<typeof knowledgeBaseUpdateSchema>;
+
 export const knowledgeBaseMemberUpsertSchema = z.object({
   principal_type: z.enum(["user", "group"]),
   principal_id: z

@@ -1,13 +1,13 @@
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import request_identity
-from app.db.models import KnowledgeBase, KnowledgeBaseMember
+from app.db.models import EvaluationRun, IngestionJob, KnowledgeBase, KnowledgeBaseMember
 from app.db.session import get_db
 from app.schemas.knowledge_base import (
     KnowledgeBaseCreate,
@@ -15,12 +15,39 @@ from app.schemas.knowledge_base import (
     KnowledgeBaseMemberUpsert,
     KnowledgeBasePermissionRead,
     KnowledgeBaseRead,
+    KnowledgeBaseUpdate,
 )
 from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.knowledge_base_service import knowledge_base_service
 
 router = APIRouter()
+
+
+async def _owner_knowledge_base(
+    db: AsyncSession,
+    identity: RequestIdentity,
+    knowledge_base_id: UUID,
+    *,
+    allow_archived: bool = False,
+) -> KnowledgeBase:
+    knowledge_base = await db.get(KnowledgeBase, knowledge_base_id)
+    allowed_statuses = {"active", "archived"} if allow_archived else {"active"}
+    if (
+        knowledge_base is None
+        or knowledge_base.tenant_id != identity.tenant_id
+        or knowledge_base.status not in allowed_statuses
+    ):
+        raise HTTPException(status_code=404, detail="knowledge base not found")
+    try:
+        permission, _ = await knowledge_base_service.effective_permission(
+            db, identity, knowledge_base
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if permission != "owner":
+        raise HTTPException(status_code=403, detail="knowledge-base owner permission required")
+    return knowledge_base
 
 
 @router.post("", response_model=KnowledgeBaseRead, status_code=status.HTTP_201_CREATED)
@@ -72,12 +99,135 @@ async def create_knowledge_base(
 
 @router.get("", response_model=list[KnowledgeBaseRead])
 async def list_knowledge_bases(
+    include_archived: bool = Query(default=False),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[KnowledgeBase]:
-    knowledge_bases = await knowledge_base_service.list_accessible_identity(db, identity)
+    knowledge_bases = await knowledge_base_service.list_accessible_identity(
+        db, identity, include_archived=include_archived
+    )
     await db.commit()
     return knowledge_bases
+
+
+@router.get("/{knowledge_base_id}", response_model=KnowledgeBaseRead)
+async def get_knowledge_base(
+    knowledge_base_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBase:
+    knowledge_base = await db.get(KnowledgeBase, knowledge_base_id)
+    if knowledge_base is None or knowledge_base.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=404, detail="knowledge base not found")
+    if knowledge_base.status == "archived":
+        return await _owner_knowledge_base(
+            db, identity, knowledge_base_id, allow_archived=True
+        )
+    try:
+        return await knowledge_base_service.authorize_identity(
+            db, identity, knowledge_base_id
+        )
+    except (LookupError, PermissionError) as exc:
+        raise HTTPException(status_code=404, detail="knowledge base not found") from exc
+
+
+@router.patch("/{knowledge_base_id}", response_model=KnowledgeBaseRead)
+async def update_knowledge_base(
+    knowledge_base_id: UUID,
+    payload: KnowledgeBaseUpdate,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBase:
+    knowledge_base = await _owner_knowledge_base(db, identity, knowledge_base_id)
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(knowledge_base, key, value)
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="knowledge_bases.updated",
+        resource_type="knowledge_base",
+        resource_id=str(knowledge_base.id),
+        details={"fields": sorted(changes)},
+    )
+    await db.commit()
+    await db.refresh(knowledge_base)
+    return knowledge_base
+
+
+@router.post("/{knowledge_base_id}/archive", response_model=KnowledgeBaseRead)
+async def archive_knowledge_base(
+    knowledge_base_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBase:
+    knowledge_base = await _owner_knowledge_base(db, identity, knowledge_base_id)
+    if knowledge_base.is_default:
+        raise HTTPException(status_code=409, detail="the default knowledge base cannot be archived")
+    active_work = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(IngestionJob)
+            .where(
+                IngestionJob.knowledge_base_id == knowledge_base.id,
+                IngestionJob.status.in_(["queued", "running"]),
+            )
+        )
+        or 0
+    ) + int(
+        await db.scalar(
+            select(func.count())
+            .select_from(EvaluationRun)
+            .where(
+                EvaluationRun.knowledge_base_id == knowledge_base.id,
+                EvaluationRun.status.in_(["queued", "running"]),
+            )
+        )
+        or 0
+    )
+    if active_work:
+        raise HTTPException(
+            status_code=409,
+            detail="knowledge base has queued or running work",
+        )
+    knowledge_base.status = "archived"
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="knowledge_bases.archived",
+        resource_type="knowledge_base",
+        resource_id=str(knowledge_base.id),
+    )
+    await db.commit()
+    await db.refresh(knowledge_base)
+    return knowledge_base
+
+
+@router.post("/{knowledge_base_id}/restore", response_model=KnowledgeBaseRead)
+async def restore_knowledge_base(
+    knowledge_base_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBase:
+    knowledge_base = await _owner_knowledge_base(
+        db, identity, knowledge_base_id, allow_archived=True
+    )
+    if knowledge_base.status != "archived":
+        raise HTTPException(status_code=409, detail="knowledge base is not archived")
+    knowledge_base.status = "active"
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="knowledge_bases.restored",
+        resource_type="knowledge_base",
+        resource_id=str(knowledge_base.id),
+    )
+    await db.commit()
+    await db.refresh(knowledge_base)
+    return knowledge_base
 
 
 @router.get(
@@ -119,9 +269,15 @@ async def get_current_permission(
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeBasePermissionRead:
     try:
-        knowledge_base = await knowledge_base_service.authorize_identity(
-            db, identity, knowledge_base_id
-        )
+        knowledge_base = await db.get(KnowledgeBase, knowledge_base_id)
+        if knowledge_base is not None and knowledge_base.status == "archived":
+            knowledge_base = await _owner_knowledge_base(
+                db, identity, knowledge_base_id, allow_archived=True
+            )
+        else:
+            knowledge_base = await knowledge_base_service.authorize_identity(
+                db, identity, knowledge_base_id
+            )
     except (LookupError, PermissionError) as exc:
         raise HTTPException(status_code=404, detail="knowledge base not found") from exc
     permission, source = await knowledge_base_service.effective_permission(
@@ -143,14 +299,13 @@ async def upsert_member(
 ) -> KnowledgeBaseMember:
     tenant_id = identity.tenant_id
     user_id = identity.user_id
-    try:
-        await knowledge_base_service.authorize_identity(
-            db, identity, knowledge_base_id, required_permission="owner"
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    knowledge_base = await _owner_knowledge_base(db, identity, knowledge_base_id)
+    if (
+        payload.principal_type == "user"
+        and payload.principal_id == knowledge_base.created_by
+        and payload.permission != "owner"
+    ):
+        raise HTTPException(status_code=409, detail="the creator must retain owner permission")
 
     member_id = uuid4()
     await db.execute(
@@ -192,3 +347,55 @@ async def upsert_member(
     if member is None:
         raise RuntimeError("member upsert did not return a row")
     return member
+
+
+@router.delete(
+    "/{knowledge_base_id}/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_member(
+    knowledge_base_id: UUID,
+    member_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    knowledge_base = await _owner_knowledge_base(db, identity, knowledge_base_id)
+    member = await db.get(KnowledgeBaseMember, member_id)
+    if (
+        member is None
+        or member.tenant_id != identity.tenant_id
+        or member.knowledge_base_id != knowledge_base.id
+    ):
+        raise HTTPException(status_code=404, detail="knowledge-base member not found")
+    if member.principal_type == "user" and member.principal_id == knowledge_base.created_by:
+        raise HTTPException(status_code=409, detail="the creator owner grant cannot be removed")
+    if member.permission == "owner":
+        owner_count = int(
+            await db.scalar(
+                select(func.count())
+                .select_from(KnowledgeBaseMember)
+                .where(
+                    KnowledgeBaseMember.knowledge_base_id == knowledge_base.id,
+                    KnowledgeBaseMember.permission == "owner",
+                )
+            )
+            or 0
+        )
+        if owner_count <= 1:
+            raise HTTPException(status_code=409, detail="the last owner grant cannot be removed")
+    details = {
+        "principal_type": member.principal_type,
+        "principal_id": member.principal_id,
+        "permission": member.permission,
+    }
+    await db.delete(member)
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="knowledge_bases.member_removed",
+        resource_type="knowledge_base",
+        resource_id=str(knowledge_base.id),
+        details=details,
+    )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -39,6 +39,14 @@ export const systemZh = {
   auditRefresh: "刷新审计",
   auditLoading: "正在加载审计记录…",
   auditEmpty: "暂无审计记录。",
+  auditActionFilter: "操作精确筛选",
+  auditActionPlaceholder: "例如 knowledge_bases.updated",
+  auditResourceFilter: "资源类型精确筛选",
+  auditResourcePlaceholder: "例如 knowledge_base",
+  auditPagination: "审计日志分页",
+  previous: "上一页",
+  next: "下一页",
+  pageSummary: "第 {{page}} / {{pages}} 页，共 {{total}} 条",
 } as const;
 
 export type SystemDict = { readonly [K in keyof typeof systemZh]: string };

@@ -28,6 +28,10 @@ export function SystemPage() {
   const { t, i18n } = useTranslation();
   const { api, identity } = useAuth();
   const [rebuildJobId, setRebuildJobId] = useState<string | null>(null);
+  const [auditAction, setAuditAction] = useState("");
+  const [auditResourceType, setAuditResourceType] = useState("");
+  const [auditOffset, setAuditOffset] = useState(0);
+  const auditLimit = 10;
   const rebuild = useMutation({
     mutationFn: () => api.rebuildIndex(),
     onSuccess: (job) => {
@@ -53,8 +57,13 @@ export function SystemPage() {
     retry: 0,
   });
   const auditLogs = useQuery({
-    queryKey: ["audit-logs", "recent"],
-    queryFn: () => api.listAuditLogs({ limit: 20 }),
+    queryKey: ["audit-logs", "recent", auditAction, auditResourceType, auditOffset],
+    queryFn: () => api.listAuditLogs({
+      action: auditAction || undefined,
+      resourceType: auditResourceType || undefined,
+      limit: auditLimit,
+      offset: auditOffset,
+    }),
     enabled: Boolean(identity?.is_admin),
   });
   const locale = i18n.language as AppLocale;
@@ -248,6 +257,10 @@ export function SystemPage() {
                 {t("system:auditRefresh")}
               </Button>
             </div>
+            <div className={styles.auditFilters}>
+              <label>{t("system:auditActionFilter")}<input value={auditAction} onChange={(event) => { setAuditAction(event.target.value); setAuditOffset(0); }} placeholder={t("system:auditActionPlaceholder")} /></label>
+              <label>{t("system:auditResourceFilter")}<input value={auditResourceType} onChange={(event) => { setAuditResourceType(event.target.value); setAuditOffset(0); }} placeholder={t("system:auditResourcePlaceholder")} /></label>
+            </div>
             {auditLogs.isLoading ? <p>{t("system:auditLoading")}</p> : null}
             {auditLogs.isError ? <OperationError error={auditLogs.error} onRetry={() => void auditLogs.refetch()} /> : null}
             {auditLogs.data?.items.length === 0 ? <p className={styles.muted}>{t("system:auditEmpty")}</p> : null}
@@ -262,6 +275,7 @@ export function SystemPage() {
                 ))}
               </ul>
             ) : null}
+            {auditLogs.data && auditLogs.data.total > 0 ? <nav className={styles.pagination} aria-label={t("system:auditPagination")}><Button type="button" variant="secondary" disabled={auditOffset === 0} onClick={() => setAuditOffset(Math.max(0, auditOffset - auditLimit))}>{t("system:previous")}</Button><span>{t("system:pageSummary", { page: Math.floor(auditOffset / auditLimit) + 1, pages: Math.max(1, Math.ceil(auditLogs.data.total / auditLimit)), total: auditLogs.data.total })}</span><Button type="button" variant="secondary" disabled={auditOffset + auditLimit >= auditLogs.data.total} onClick={() => setAuditOffset(auditOffset + auditLimit)}>{t("system:next")}</Button></nav> : null}
           </article>
         ) : null}
       </section>

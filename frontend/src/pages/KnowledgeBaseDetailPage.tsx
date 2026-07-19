@@ -19,8 +19,8 @@ export function KnowledgeBaseDetailPage() {
   const { api } = useAuth();
   const queryClient = useQueryClient();
   const knowledgeBases = useQuery({
-    queryKey: ["knowledge-bases"],
-    queryFn: () => api.listKnowledgeBases(),
+    queryKey: ["knowledge-bases", "all"],
+    queryFn: () => api.listKnowledgeBases({ includeArchived: true }),
   });
   const knowledgeBase = knowledgeBases.data?.find((item) => item.id === knowledgeBaseId);
   const effectivePermission = useQuery({
@@ -28,8 +28,10 @@ export function KnowledgeBaseDetailPage() {
     queryFn: () => api.getKnowledgeBasePermission(knowledgeBaseId ?? ""),
     enabled: Boolean(knowledgeBaseId && knowledgeBase),
   });
-  const canEdit = effectivePermission.data?.permission === "editor" || effectivePermission.data?.permission === "owner";
-  const canManageMembers = effectivePermission.data?.permission === "owner";
+  const isActive = knowledgeBase?.status === "active";
+  const canEdit = Boolean(isActive && (effectivePermission.data?.permission === "editor" || effectivePermission.data?.permission === "owner"));
+  const canManageLifecycle = effectivePermission.data?.permission === "owner";
+  const canManageMembers = Boolean(isActive && effectivePermission.data?.permission === "owner");
   const members = useQuery({
     queryKey: ["knowledge-base-members", knowledgeBaseId],
     queryFn: () => api.listKnowledgeBaseMembers(knowledgeBaseId ?? ""),
@@ -53,6 +55,33 @@ export function KnowledgeBaseDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["knowledge-base-members", knowledgeBaseId] });
     },
   });
+  const updateMutation = useMutation({
+    mutationFn: (payload: { name: string; description: string | null; access_mode: "tenant" | "restricted" }) =>
+      api.updateKnowledgeBase(knowledgeBaseId ?? "", payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+    },
+  });
+  const archiveMutation = useMutation({
+    mutationFn: () => api.archiveKnowledgeBase(knowledgeBaseId ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-base-permission", knowledgeBaseId] });
+    },
+  });
+  const restoreMutation = useMutation({
+    mutationFn: () => api.restoreKnowledgeBase(knowledgeBaseId ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-base-permission", knowledgeBaseId] });
+    },
+  });
+  const deleteMemberMutation = useMutation({
+    mutationFn: (memberId: string) => api.deleteKnowledgeBaseMember(knowledgeBaseId ?? "", memberId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["knowledge-base-members", knowledgeBaseId] });
+    },
+  });
 
   function submitMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,6 +93,26 @@ export function KnowledgeBaseDetailPage() {
     }
     setMemberValidation(null);
     memberMutation.mutate();
+  }
+
+  function submitUpdate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    updateMutation.mutate({
+      name: String(form.get("name") ?? "").trim(),
+      description: String(form.get("description") ?? "").trim() || null,
+      access_mode: form.get("access_mode") === "tenant" ? "tenant" : "restricted",
+    });
+  }
+
+  function requestArchive() {
+    if (window.confirm(t("knowledgeBases:archiveConfirm"))) archiveMutation.mutate();
+  }
+
+  function requestMemberRemoval(memberId: string, principalId: string) {
+    if (window.confirm(t("knowledgeBases:memberRemoveConfirm", { principal: principalId }))) {
+      deleteMemberMutation.mutate(memberId);
+    }
   }
 
   if (knowledgeBases.isLoading) {
@@ -129,6 +178,8 @@ export function KnowledgeBaseDetailPage() {
             label={
               knowledgeBase.status === "active"
                 ? t("knowledgeBases:activeStatus")
+                : knowledgeBase.status === "archived"
+                  ? t("knowledgeBases:archivedStatus")
                 : t("knowledgeBases:unknownStatus", { status: knowledgeBase.status })
             }
           />
@@ -188,6 +239,47 @@ export function KnowledgeBaseDetailPage() {
         <p>{permissionMessage}</p>
       </section>
 
+      {canManageLifecycle ? (
+        <section className={styles.permission} aria-labelledby="knowledge-base-lifecycle-title">
+          <div>
+            <h2 id="knowledge-base-lifecycle-title">{t("knowledgeBases:lifecycleTitle")}</h2>
+            <p>{t("knowledgeBases:lifecycleDetail")}</p>
+          </div>
+          {isActive ? (
+            <form className={styles.memberForm} key={knowledgeBase.updated_at} onSubmit={submitUpdate}>
+              <div className={styles.formField}>
+                <label htmlFor="knowledge-base-edit-name">{t("knowledgeBases:name")}</label>
+                <input id="knowledge-base-edit-name" name="name" required maxLength={255} defaultValue={knowledgeBase.name} />
+              </div>
+              <div className={styles.formField}>
+                <label htmlFor="knowledge-base-edit-description">{t("knowledgeBases:description")}</label>
+                <textarea id="knowledge-base-edit-description" name="description" maxLength={4000} defaultValue={knowledgeBase.description ?? ""} />
+              </div>
+              <div className={styles.formField}>
+                <label htmlFor="knowledge-base-edit-access">{t("knowledgeBases:accessMode")}</label>
+                <select id="knowledge-base-edit-access" name="access_mode" defaultValue={knowledgeBase.access_mode}>
+                  <option value="restricted">{t("knowledgeBases:restrictedAccess")}</option>
+                  <option value="tenant">{t("knowledgeBases:tenantAccess")}</option>
+                </select>
+              </div>
+              {updateMutation.isError ? <OperationError error={updateMutation.error} /> : null}
+              {updateMutation.isSuccess ? <p className={styles.successNotice} role="status">{t("knowledgeBases:updateSuccess")}</p> : null}
+              <div className={styles.formActions}>
+                <Button type="submit" disabled={updateMutation.isPending}>{updateMutation.isPending ? t("knowledgeBases:updating") : t("knowledgeBases:update")}</Button>
+                <Button type="button" variant="danger" disabled={knowledgeBase.is_default || archiveMutation.isPending} onClick={requestArchive}>{archiveMutation.isPending ? t("knowledgeBases:archiving") : t("knowledgeBases:archive")}</Button>
+              </div>
+              {knowledgeBase.is_default ? <p>{t("knowledgeBases:defaultArchiveBlocked")}</p> : null}
+              {archiveMutation.isError ? <OperationError error={archiveMutation.error} onRetry={requestArchive} /> : null}
+            </form>
+          ) : (
+            <div className={styles.formActions}>
+              <Button type="button" disabled={restoreMutation.isPending} onClick={() => restoreMutation.mutate()}>{restoreMutation.isPending ? t("knowledgeBases:restoring") : t("knowledgeBases:restore")}</Button>
+              {restoreMutation.isError ? <OperationError error={restoreMutation.error} onRetry={() => restoreMutation.mutate()} /> : null}
+            </div>
+          )}
+        </section>
+      ) : null}
+
       {canManageMembers ? (
         <section className={styles.permission} aria-labelledby="knowledge-base-member-title">
           <div>
@@ -197,7 +289,8 @@ export function KnowledgeBaseDetailPage() {
           {members.isLoading ? <p>{t("knowledgeBases:memberLoading")}</p> : null}
           {members.isError ? <OperationError error={members.error} onRetry={() => void members.refetch()} /> : null}
           {members.data?.length === 0 ? <p>{t("knowledgeBases:memberEmpty")}</p> : null}
-          {members.data?.length ? <ul className={styles.memberList}>{members.data.map((member) => <li key={member.id}><code>{member.principal_id}</code><span>{member.principal_type}</span><strong>{member.permission}</strong></li>)}</ul> : null}
+          {members.data?.length ? <ul className={styles.memberList}>{members.data.map((member) => <li key={member.id}><code>{member.principal_id}</code><span>{member.principal_type}</span><strong>{member.permission}</strong>{member.principal_type === "user" && member.principal_id === knowledgeBase.created_by ? <span>{t("knowledgeBases:creatorGrant")}</span> : <Button type="button" variant="ghost" disabled={deleteMemberMutation.isPending} onClick={() => requestMemberRemoval(member.id, member.principal_id)}>{t("knowledgeBases:memberRemove")}</Button>}</li>)}</ul> : null}
+          {deleteMemberMutation.isError ? <OperationError error={deleteMemberMutation.error} /> : null}
           <form className={styles.memberForm} onSubmit={submitMember}>
             <div className={styles.formField}>
               <label htmlFor="member-principal-type">{t("knowledgeBases:memberPrincipalType")}</label>
@@ -258,7 +351,7 @@ export function KnowledgeBaseDetailPage() {
         </section>
       ) : null}
 
-      <DocumentOperations knowledgeBase={knowledgeBase} canEdit={canEdit} />
+      {isActive ? <DocumentOperations knowledgeBase={knowledgeBase} canEdit={canEdit} /> : null}
     </div>
   );
 }

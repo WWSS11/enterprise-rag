@@ -12,6 +12,8 @@ import styles from "./KnowledgeBaseOps.module.css";
 function statusLabel(status: string, t: (key: string, options?: Record<string, unknown>) => string) {
   return status === "active"
     ? { label: t("knowledgeBases:activeStatus"), tone: "ok" as const }
+    : status === "archived"
+      ? { label: t("knowledgeBases:archivedStatus"), tone: "unknown" as const }
     : {
         label: t("knowledgeBases:unknownStatus", { status }),
         tone: "unknown" as const,
@@ -22,8 +24,8 @@ export function KnowledgeBasesPage() {
   const { t, i18n } = useTranslation(["knowledgeBases", "common"]);
   const { api } = useAuth();
   const knowledgeBases = useQuery({
-    queryKey: ["knowledge-bases"],
-    queryFn: () => api.listKnowledgeBases(),
+    queryKey: ["knowledge-bases", "all"],
+    queryFn: () => api.listKnowledgeBases({ includeArchived: true }),
   });
   const locale = i18n.language as AppLocale;
 
