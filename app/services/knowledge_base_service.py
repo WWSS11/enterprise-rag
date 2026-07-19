@@ -48,6 +48,8 @@ class KnowledgeBaseService:
                 )
             ).scalars()
         )
+        if not permissions:
+            raise PermissionError("insufficient knowledge-base permission")
         permission = max(permissions, key=lambda item: PERMISSION_RANK.get(item, 0))
         return permission, "membership"
 
@@ -69,7 +71,11 @@ class KnowledgeBaseService:
         )
 
     async def list_accessible_identity(
-        self, db: AsyncSession, identity: RequestIdentity
+        self,
+        db: AsyncSession,
+        identity: RequestIdentity,
+        *,
+        include_archived: bool = False,
     ) -> list[KnowledgeBase]:
         return await self.list_accessible(
             db,
@@ -77,6 +83,7 @@ class KnowledgeBaseService:
             identity.user_id,
             groups=identity.groups,
             is_admin=identity.is_admin,
+            include_archived=include_archived,
         )
 
     async def get_or_create_default(
@@ -175,14 +182,16 @@ class KnowledgeBaseService:
         *,
         groups: frozenset[str] | None = None,
         is_admin: bool | None = None,
+        include_archived: bool = False,
     ) -> list[KnowledgeBase]:
         await self.get_or_create_default(db, tenant_id, user_id)
+        statuses = ["active", "archived"] if include_archived else ["active"]
         if is_admin is True or (is_admin is None and user_id in get_settings().admin_user_ids):
             result = await db.execute(
                 select(KnowledgeBase)
                 .where(
                     KnowledgeBase.tenant_id == tenant_id,
-                    KnowledgeBase.status == "active",
+                    KnowledgeBase.status.in_(statuses),
                 )
                 .order_by(KnowledgeBase.is_default.desc(), KnowledgeBase.name.asc())
             )
@@ -205,12 +214,28 @@ class KnowledgeBaseService:
             KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id,
             or_(*principal_filters),
         )
+        owner_membership = exists().where(
+            KnowledgeBaseMember.knowledge_base_id == KnowledgeBase.id,
+            KnowledgeBaseMember.permission == "owner",
+            or_(*principal_filters),
+        )
+        visibility = and_(
+            KnowledgeBase.status == "active",
+            or_(KnowledgeBase.access_mode == "tenant", membership),
+        )
+        if include_archived:
+            visibility = or_(
+                visibility,
+                and_(
+                    KnowledgeBase.status == "archived",
+                    or_(KnowledgeBase.created_by == user_id, owner_membership),
+                ),
+            )
         result = await db.execute(
             select(KnowledgeBase)
             .where(
                 KnowledgeBase.tenant_id == tenant_id,
-                KnowledgeBase.status == "active",
-                or_(KnowledgeBase.access_mode == "tenant", membership),
+                visibility,
             )
             .order_by(KnowledgeBase.is_default.desc(), KnowledgeBase.name.asc())
         )

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import IngestionJob, KnowledgeBase
 from app.main import app
 from app.schemas.document import JobPage
+from app.schemas.knowledge_base import KnowledgeBaseUpdate
 from app.security.identity import RequestIdentity
 from app.services.knowledge_base_service import knowledge_base_service
 
@@ -26,6 +27,12 @@ def test_control_plane_history_routes_are_published() -> None:
     assert expected <= paths.keys()
     assert "get" in paths["/api/v1/jobs"]
     assert "get" in paths["/api/v1/evaluations/runs"]
+    assert "patch" in paths["/api/v1/knowledge-bases/{knowledge_base_id}"]
+    assert "post" in paths["/api/v1/knowledge-bases/{knowledge_base_id}/archive"]
+    assert "post" in paths["/api/v1/knowledge-bases/{knowledge_base_id}/restore"]
+    assert "delete" in paths[
+        "/api/v1/knowledge-bases/{knowledge_base_id}/members/{member_id}"
+    ]
 
 
 def test_ingestion_jobs_have_stable_knowledge_base_scope() -> None:
@@ -38,6 +45,18 @@ def test_ingestion_jobs_have_stable_knowledge_base_scope() -> None:
 def test_page_contract_enforces_bounded_limits() -> None:
     with pytest.raises(ValidationError):
         JobPage(items=[], total=0, limit=101, offset=0)
+
+
+def test_knowledge_base_update_requires_an_explicit_change() -> None:
+    with pytest.raises(ValidationError):
+        KnowledgeBaseUpdate()
+    with pytest.raises(ValidationError):
+        KnowledgeBaseUpdate(name=None)
+    with pytest.raises(ValidationError):
+        KnowledgeBaseUpdate(access_mode=None)
+    assert KnowledgeBaseUpdate(description=None).model_dump(exclude_unset=True) == {
+        "description": None
+    }
 
 
 @pytest.mark.asyncio

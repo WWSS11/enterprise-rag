@@ -295,6 +295,66 @@ describe("Knowledge Base Ops pages", () => {
     });
   });
 
+  it("updates, archives, and revokes a non-creator member through real lifecycle APIs", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const memberId = "77777777-7777-4777-8777-777777777777";
+    let currentKnowledgeBase = kb();
+    let members = [
+      {
+        id: memberId,
+        knowledge_base_id: kbId,
+        principal_type: "group",
+        principal_id: "engineering",
+        permission: "editor",
+        created_at: "2026-07-15T00:00:00Z",
+        updated_at: "2026-07-15T00:00:00Z",
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/permissions/me")) {
+        return new Response(JSON.stringify({ knowledge_base_id: kbId, permission: "owner", source: "creator" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/members/${memberId}`) && init?.method === "DELETE") {
+        members = [];
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith(`/knowledge-bases/${kbId}/members`) && init?.method === "GET") {
+        return new Response(JSON.stringify(members), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/knowledge-bases/${kbId}`) && init?.method === "PATCH") {
+        currentKnowledgeBase = { ...currentKnowledgeBase, ...JSON.parse(String(init.body)), updated_at: "2026-07-15T00:01:00Z" };
+        return new Response(JSON.stringify(currentKnowledgeBase), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/knowledge-bases/${kbId}/archive`)) {
+        currentKnowledgeBase = { ...currentKnowledgeBase, status: "archived" };
+        return new Response(JSON.stringify(currentKnowledgeBase), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/documents")) return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify([currentKnowledgeBase]), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    renderOps(
+      <Routes><Route path="/app/knowledge-bases/:knowledgeBaseId" element={<KnowledgeBaseDetailPage />} /></Routes>,
+      fetchMock as unknown as typeof fetch,
+      { route: `/app/knowledge-bases/${kbId}`, identity: { user_id: "owner-1" } },
+    );
+
+    expect(await screen.findByRole("heading", { name: "知识库生命周期" })).toBeVisible();
+    await user.clear(screen.getByLabelText("名称"));
+    await user.type(screen.getByLabelText("名称"), "Security Policies");
+    await user.selectOptions(screen.getByLabelText("访问模式"), "tenant");
+    await user.click(screen.getByRole("button", { name: "保存知识库设置" }));
+    expect(await screen.findByText("知识库设置已更新。")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "撤销授权" }));
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith(`/members/${memberId}`) && init?.method === "DELETE")).toBe(true));
+
+    await user.click(screen.getByRole("button", { name: "归档知识库" }));
+    expect(await screen.findByText("已归档")).toBeVisible();
+    expect(window.confirm).toHaveBeenCalled();
+  });
+
   it("preserves create form state across locale changes", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn() as unknown as typeof fetch;

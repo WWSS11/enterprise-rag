@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class KnowledgeBaseCreate(BaseModel):
@@ -10,6 +10,22 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4_000)
     access_mode: Literal["tenant", "restricted"] = "restricted"
+
+
+class KnowledgeBaseUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4_000)
+    access_mode: Literal["tenant", "restricted"] | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> "KnowledgeBaseUpdate":
+        if not self.model_fields_set:
+            raise ValueError("at least one knowledge-base field is required")
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("knowledge-base name cannot be null")
+        if "access_mode" in self.model_fields_set and self.access_mode is None:
+            raise ValueError("knowledge-base access mode cannot be null")
+        return self
 
 
 class KnowledgeBaseRead(BaseModel):

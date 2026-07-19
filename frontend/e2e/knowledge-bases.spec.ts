@@ -114,7 +114,7 @@ test.describe("Knowledge Base Ops mocked API", () => {
     const bases = [knowledgeBase(existingKbId)];
     let uploaded = false;
     try {
-      await page.route("**/api/v1/knowledge-bases", async (route) => {
+      await page.route(/\/api\/v1\/knowledge-bases(?:\?.*)?$/, async (route) => {
         if (route.request().method() === "POST") {
           const payload = route.request().postDataJSON() as Record<string, unknown>;
           expect(payload).toEqual({
@@ -339,7 +339,7 @@ test.describe("Knowledge Base Ops mocked API", () => {
   });
 
   test("shows RFC7807 request_id when creation conflicts", async ({ page }) => {
-    await page.route("**/api/v1/knowledge-bases", async (route) => {
+    await page.route(/\/api\/v1\/knowledge-bases(?:\?.*)?$/, async (route) => {
       if (route.request().method() === "POST") {
         await route.fulfill({
           status: 409,

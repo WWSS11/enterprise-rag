@@ -41,4 +41,12 @@ export const systemEn = {
   auditRefresh: "Refresh audit",
   auditLoading: "Loading audit records…",
   auditEmpty: "No audit records.",
+  auditActionFilter: "Exact action filter",
+  auditActionPlaceholder: "e.g. knowledge_bases.updated",
+  auditResourceFilter: "Exact resource-type filter",
+  auditResourcePlaceholder: "e.g. knowledge_base",
+  auditPagination: "Audit-log pagination",
+  previous: "Previous",
+  next: "Next",
+  pageSummary: "Page {{page}} of {{pages}} · {{total}} total",
 } as const satisfies SystemDict;

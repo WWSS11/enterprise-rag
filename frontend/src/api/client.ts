@@ -8,6 +8,7 @@ import {
   knowledgeBaseListSchema,
   knowledgeBaseSchema,
   knowledgeBaseCreateSchema,
+  knowledgeBaseUpdateSchema,
   knowledgeBaseMemberSchema,
   knowledgeBaseMemberListSchema,
   knowledgeBasePermissionSchema,
@@ -40,6 +41,7 @@ import {
   type HealthResponse,
   type KnowledgeBase,
   type KnowledgeBaseCreate,
+  type KnowledgeBaseUpdate,
   type KnowledgeBaseMember,
   type KnowledgeBaseMemberUpsert,
   type KnowledgeBasePermission,
@@ -399,9 +401,20 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    listKnowledgeBases(): Promise<KnowledgeBase[]> {
-      return request("/api/v1/knowledge-bases", { method: "GET" }, (data) =>
+    listKnowledgeBases(options: { includeArchived?: boolean } = {}): Promise<KnowledgeBase[]> {
+      const path = withQuery("/api/v1/knowledge-bases", {
+        include_archived: options.includeArchived ? "true" : undefined,
+      });
+      return request(path, { method: "GET" }, (data) =>
         knowledgeBaseListSchema.parse(data),
+      );
+    },
+
+    getKnowledgeBase(knowledgeBaseId: string): Promise<KnowledgeBase> {
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`,
+        { method: "GET" },
+        (data) => knowledgeBaseSchema.parse(data),
       );
     },
 
@@ -414,6 +427,38 @@ export function createApiClient(options: ApiClientOptions) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
+        (data) => knowledgeBaseSchema.parse(data),
+      );
+    },
+
+    updateKnowledgeBase(
+      knowledgeBaseId: string,
+      payload: KnowledgeBaseUpdate,
+    ): Promise<KnowledgeBase> {
+      const body = knowledgeBaseUpdateSchema.parse(payload);
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => knowledgeBaseSchema.parse(data),
+      );
+    },
+
+    archiveKnowledgeBase(knowledgeBaseId: string): Promise<KnowledgeBase> {
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/archive`,
+        { method: "POST" },
+        (data) => knowledgeBaseSchema.parse(data),
+      );
+    },
+
+    restoreKnowledgeBase(knowledgeBaseId: string): Promise<KnowledgeBase> {
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/restore`,
+        { method: "POST" },
         (data) => knowledgeBaseSchema.parse(data),
       );
     },
@@ -439,6 +484,14 @@ export function createApiClient(options: ApiClientOptions) {
         `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/members`,
         { method: "GET" },
         (data) => knowledgeBaseMemberListSchema.parse(data),
+      );
+    },
+
+    deleteKnowledgeBaseMember(knowledgeBaseId: string, memberId: string): Promise<void> {
+      return request(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/members/${encodeURIComponent(memberId)}`,
+        { method: "DELETE" },
+        () => undefined,
       );
     },
 
