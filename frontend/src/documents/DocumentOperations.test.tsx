@@ -205,7 +205,6 @@ describe("DocumentOperations", () => {
 
     expect(await screen.findByText("文件已接收，真实入库任务已创建。")).toBeVisible();
     expect(await screen.findByText("已完成")).toBeVisible();
-    expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toContain(jobId);
   });
 
   it("cancels an in-flight upload without inventing a backend job cancellation", async () => {
@@ -226,7 +225,6 @@ describe("DocumentOperations", () => {
 
     expect(await screen.findByText("上传已取消")).toBeVisible();
     expect(screen.getByRole("button", { name: "重试上传" })).toBeEnabled();
-    expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toBeNull();
   });
 
   it("retries a failed upload through a second XHR and succeeds", async () => {
@@ -280,7 +278,6 @@ describe("DocumentOperations", () => {
 
     expect(await screen.findByText("文件已接收，真实入库任务已创建。")).toBeVisible();
     expect(await screen.findByText("已完成")).toBeVisible();
-    expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toContain(jobId);
   });
 
   it("scans, reindexes, and deletes through real job endpoints", async () => {
@@ -366,6 +363,5 @@ describe("DocumentOperations", () => {
         { url: `http://api.test/api/v1/documents/${documentId}`, method: "DELETE" },
       ]),
     );
-    expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toContain(deleteJobId);
   });
 });

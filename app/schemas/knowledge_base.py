@@ -49,3 +49,9 @@ class KnowledgeBaseMemberRead(BaseModel):
     permission: str
     created_at: datetime
     updated_at: datetime
+
+
+class KnowledgeBasePermissionRead(BaseModel):
+    knowledge_base_id: UUID
+    permission: Literal["reader", "editor", "owner"]
+    source: Literal["admin", "tenant", "creator", "membership"]

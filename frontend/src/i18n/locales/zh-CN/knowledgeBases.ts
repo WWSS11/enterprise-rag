@@ -48,8 +48,12 @@ export const knowledgeBasesZh = {
   permissionCreator: "你是创建者：后端会将创建者作为 owner。",
   permissionTenantEditor: "租户可见模式：后端允许当前租户用户执行 editor 操作。",
   permissionRestrictedUnknown: "受限知识库未返回你的成员权限级别。为避免越权假设，编辑入口保持隐藏；后端仍会独立校验所有请求。",
+  permissionEffective: "服务端确认的当前有效权限：{{permission}}（来源：{{source}}）。",
+  permissionLoading: "正在读取服务端有效权限…",
   memberTitle: "授权用户或群组",
   memberDetail: "创建者或管理员可以通过后端真实接口新增成员，或更新已有成员权限。",
+  memberLoading: "正在加载成员…",
+  memberEmpty: "暂无成员授权记录。",
   memberPrincipalType: "主体类型",
   memberUser: "用户",
   memberGroup: "群组",
@@ -60,7 +64,7 @@ export const knowledgeBasesZh = {
   memberSave: "保存授权",
   memberSaving: "正在保存…",
   memberSuccess: "已将 {{principal}} 的权限设置为 {{permission}}。",
-  memberLimitation: "当前后端仅提供授权新增/更新接口，尚不支持成员列表和撤销权限。",
+  memberLimitation: "当前支持成员列表和授权新增/更新；撤销权限接口尚未提供。",
   refresh: "刷新列表",
 } as const;
 

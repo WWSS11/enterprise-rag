@@ -394,6 +394,7 @@ async def prepare_feishu_sync() -> tuple[
             task_id = str(uuid4())
             job = IngestionJob(
                 tenant_id=settings.feishu_tenant_id,
+                knowledge_base_id=knowledge_base.id,
                 document_id=document.id,
                 task_id=task_id,
                 job_type="document_ingestion",
@@ -423,6 +424,7 @@ async def prepare_feishu_sync() -> tuple[
             task_id = str(uuid4())
             job = IngestionJob(
                 tenant_id=settings.feishu_tenant_id,
+                knowledge_base_id=knowledge_base.id,
                 document_id=document.id,
                 task_id=task_id,
                 job_type="document_deletion",

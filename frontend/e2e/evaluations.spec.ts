@@ -532,8 +532,17 @@ test.describe("Evaluation Console mocked API", () => {
       await page.route("**/api/v1/documents**", (route) =>
         fulfillJson(route, [readyDocument()]),
       );
-      await page.route("**/api/v1/evaluations/runs", async (route) => {
-        expect(route.request().method(), "The frontend must not invent a run-list request").toBe("POST");
+      await page.route(/\/api\/v1\/evaluations\/runs(?:\?.*)?$/, async (route) => {
+        if (route.request().method() === "GET") {
+          await fulfillJson(route, {
+            items: [evaluationRun(candidateRunId, "succeeded"), evaluationRun(baselineRunId, "succeeded")],
+            total: 2,
+            limit: 50,
+            offset: 0,
+          });
+          return;
+        }
+        expect(route.request().method()).toBe("POST");
         expect(route.request().headers().authorization).toBe("Bearer mock-access-token-for-e2e");
         expect(route.request().postDataJSON()).toEqual({ dataset_id: datasetId });
         await fulfillJson(route, evaluationRun(candidateRunId, "queued"), 202);
@@ -645,7 +654,7 @@ test.describe("Evaluation Console mocked API", () => {
       expect(candidateRunGetStatuses.slice(0, 3)).toEqual(["queued", "running", "succeeded"]);
 
       const rememberedRun = await page.evaluate(
-        ({ id, runId }) => {
+        ({ id }) => {
           const key = [
             "evidence-desk:evaluation-run-ids:v2",
             encodeURIComponent("default"),
@@ -655,12 +664,11 @@ test.describe("Evaluation Console mocked API", () => {
           return {
             session: window.sessionStorage.getItem(key),
             local: window.localStorage.getItem(key),
-            expected: JSON.stringify([runId]),
           };
         },
-        { id: datasetId, runId: candidateRunId },
+        { id: datasetId },
       );
-      expect(rememberedRun.session).toBe(rememberedRun.expected);
+      expect(rememberedRun.session).toBeNull();
       expect(rememberedRun.local).toBeNull();
 
       await expect(page.getByRole("heading", { name: "Summary metrics" })).toBeVisible();

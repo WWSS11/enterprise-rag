@@ -71,6 +71,7 @@ class ConversationService:
         citations: list[dict[str, object]],
     ) -> None:
         now = datetime.now(UTC)
+        conversation.updated_at = now
         db.add_all(
             [
                 ChatMessage(

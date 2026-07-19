@@ -34,6 +34,11 @@ export const systemZh = {
   rebuildStarting: "正在创建重建任务…",
   rebuildConfirm: "确定启动全量向量索引重建吗？系统将阻止并发重建，并在后台切换新索引。",
   rebuildAdminOnly: "只有管理员可以启动全量索引重建。",
+  auditTitle: "最近审计记录",
+  auditDetail: "仅管理员可见，数据来自当前租户的服务端审计日志。",
+  auditRefresh: "刷新审计",
+  auditLoading: "正在加载审计记录…",
+  auditEmpty: "暂无审计记录。",
 } as const;
 
 export type SystemDict = { readonly [K in keyof typeof systemZh]: string };

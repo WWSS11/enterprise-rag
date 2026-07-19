@@ -160,7 +160,36 @@ test.describe("Knowledge Base Ops mocked API", () => {
       await page.route(`**/api/v1/jobs/${jobId}`, (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(job()) }),
       );
+      await page.route(/\/api\/v1\/jobs(?:\?.*)?$/, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: [job("succeeded")], total: 1, limit: 50, offset: 0 }),
+        }),
+      );
+      await page.route("**/api/v1/conversations**", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }),
+        }),
+      );
+      await page.route(`**/api/v1/knowledge-bases/${createdKbId}/permissions/me`, (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            knowledge_base_id: createdKbId,
+            permission: "owner",
+            source: "creator",
+          }),
+        }),
+      );
       await page.route(`**/api/v1/knowledge-bases/${createdKbId}/members`, async (route) => {
+        if (route.request().method() === "GET") {
+          await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+          return;
+        }
         expect(route.request().method()).toBe("PUT");
         expect(route.request().postDataJSON()).toEqual({
           principal_type: "group",

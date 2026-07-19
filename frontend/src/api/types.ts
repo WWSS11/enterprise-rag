@@ -68,6 +68,14 @@ export const knowledgeBaseMemberSchema = z.object({
   updated_at: apiDateTimeSchema,
 });
 export type KnowledgeBaseMember = z.infer<typeof knowledgeBaseMemberSchema>;
+export const knowledgeBaseMemberListSchema = z.array(knowledgeBaseMemberSchema);
+
+export const knowledgeBasePermissionSchema = z.object({
+  knowledge_base_id: z.string().uuid(),
+  permission: z.enum(["reader", "editor", "owner"]),
+  source: z.enum(["admin", "tenant", "creator", "membership"]),
+});
+export type KnowledgeBasePermission = z.infer<typeof knowledgeBasePermissionSchema>;
 
 export const documentStatusSchema = z.enum([
   "pending",
@@ -106,6 +114,7 @@ export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed
 
 export const jobSchema = z.object({
   id: z.string().uuid(),
+  knowledge_base_id: z.string().uuid().nullish().transform((value) => value ?? null),
   document_id: z.string().uuid().nullable(),
   task_id: z.string().nullable(),
   job_type: z.string(),
@@ -117,6 +126,13 @@ export const jobSchema = z.object({
   updated_at: apiDateTimeSchema,
 });
 export type Job = z.infer<typeof jobSchema>;
+export const jobPageSchema = z.object({
+  items: z.array(jobSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+export type JobPage = z.infer<typeof jobPageSchema>;
 
 export const documentUploadAcceptedSchema = z.object({
   document: documentSchema,
@@ -228,6 +244,67 @@ export const evaluationRunSchema = z.object({
   updated_at: apiDateTimeSchema,
 });
 export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
+export const evaluationRunPageSchema = z.object({
+  items: z.array(evaluationRunSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+export type EvaluationRunPage = z.infer<typeof evaluationRunPageSchema>;
+
+export const conversationSchema = z.object({
+  id: z.string().uuid(),
+  knowledge_base_id: z.string().uuid(),
+  title: z.string().nullable(),
+  status: z.string(),
+  created_at: apiDateTimeSchema,
+  updated_at: apiDateTimeSchema,
+});
+export type Conversation = z.infer<typeof conversationSchema>;
+export const conversationPageSchema = z.object({
+  items: z.array(conversationSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+export type ConversationPage = z.infer<typeof conversationPageSchema>;
+
+export const chatMessageSchema = z.object({
+  id: z.string().uuid(),
+  conversation_id: z.string().uuid(),
+  role: z.string(),
+  content: z.string(),
+  citations: z.array(z.record(z.string(), z.unknown())),
+  token_usage: z.record(z.string(), z.unknown()),
+  created_at: apiDateTimeSchema,
+});
+export type ChatMessage = z.infer<typeof chatMessageSchema>;
+export const chatMessagePageSchema = z.object({
+  items: z.array(chatMessageSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+export type ChatMessagePage = z.infer<typeof chatMessagePageSchema>;
+
+export const auditLogSchema = z.object({
+  id: z.string().uuid(),
+  user_id: z.string().nullable(),
+  action: z.string(),
+  resource_type: z.string(),
+  resource_id: z.string().nullable(),
+  request_id: z.string().nullable(),
+  details: z.record(z.string(), z.unknown()),
+  created_at: apiDateTimeSchema,
+});
+export type AuditLog = z.infer<typeof auditLogSchema>;
+export const auditLogPageSchema = z.object({
+  items: z.array(auditLogSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+});
+export type AuditLogPage = z.infer<typeof auditLogPageSchema>;
 
 export const evaluationResultSchema = z.object({
   id: z.string().uuid(),

@@ -59,6 +59,7 @@ async def scan_local_documents(
     task_id = str(uuid4())
     job = IngestionJob(
         tenant_id=tenant_id,
+        knowledge_base_id=knowledge_base.id,
         task_id=task_id,
         job_type="local_document_scan",
         status="queued",
@@ -153,6 +154,7 @@ async def upload_document(
     task_id = str(uuid4())
     job = IngestionJob(
         tenant_id=tenant_id,
+        knowledge_base_id=knowledge_base.id,
         document_id=document.id,
         task_id=task_id,
         job_type="document_ingestion",
@@ -247,6 +249,7 @@ async def reindex_document(
     task_id = str(uuid4())
     job = IngestionJob(
         tenant_id=tenant_id,
+        knowledge_base_id=document.knowledge_base_id,
         document_id=document.id,
         task_id=task_id,
         job_type="document_reindex",
@@ -303,6 +306,7 @@ async def delete_document(
     task_id = str(uuid4())
     job = IngestionJob(
         tenant_id=tenant_id,
+        knowledge_base_id=document.knowledge_base_id,
         document_id=document.id,
         task_id=task_id,
         job_type="document_deletion",

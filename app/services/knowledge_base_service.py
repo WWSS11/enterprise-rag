@@ -12,6 +12,45 @@ PERMISSION_RANK = {"reader": 10, "editor": 20, "owner": 30}
 
 
 class KnowledgeBaseService:
+    async def effective_permission(
+        self,
+        db: AsyncSession,
+        identity: RequestIdentity,
+        knowledge_base: KnowledgeBase,
+    ) -> tuple[str, str]:
+        if identity.is_admin:
+            return "owner", "admin"
+        if knowledge_base.created_by == identity.user_id:
+            return "owner", "creator"
+        if knowledge_base.access_mode == "tenant":
+            return "editor", "tenant"
+
+        principal_filters = [
+            and_(
+                KnowledgeBaseMember.principal_type == "user",
+                KnowledgeBaseMember.principal_id == identity.user_id,
+            )
+        ]
+        if identity.groups:
+            principal_filters.append(
+                and_(
+                    KnowledgeBaseMember.principal_type == "group",
+                    KnowledgeBaseMember.principal_id.in_(identity.groups),
+                )
+            )
+        permissions = list(
+            (
+                await db.execute(
+                    select(KnowledgeBaseMember.permission).where(
+                        KnowledgeBaseMember.knowledge_base_id == knowledge_base.id,
+                        or_(*principal_filters),
+                    )
+                )
+            ).scalars()
+        )
+        permission = max(permissions, key=lambda item: PERMISSION_RANK.get(item, 0))
+        return permission, "membership"
+
     async def authorize_identity(
         self,
         db: AsyncSession,

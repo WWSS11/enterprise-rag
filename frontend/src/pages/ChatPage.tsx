@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import type { ChatStage, Citation } from "@/api/types";
+import { citationSchema, type ChatStage, type Citation } from "@/api/types";
 import { isApiError } from "@/api/errors";
 import { useAuth } from "@/auth/useAuth";
 import { Button } from "@/components/Button";
@@ -93,6 +93,7 @@ function isAbortError(error: unknown): boolean {
 export function ChatPage() {
   const { t } = useTranslation(["chat", "evidence", "common"]);
   const { api } = useAuth();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const requestedKnowledgeBaseId = searchParams.get("knowledge_base_id");
   const appliedKnowledgeBaseParam = useRef<string | null>(null);
@@ -111,6 +112,7 @@ export function ChatPage() {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const mobileEvidence = useMediaQuery("(max-width: 780px)");
   const [copyNotice, setCopyNotice] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
   const knowledgeBases = useQuery({
     queryKey: ["knowledge-bases", "chat-selector"],
@@ -129,6 +131,19 @@ export function ChatPage() {
   });
 
   const selectedKnowledgeBaseId = useWatch({ control, name: "knowledgeBaseId" });
+  const conversations = useQuery({
+    queryKey: ["conversations", selectedKnowledgeBaseId],
+    queryFn: () => api.listConversations({ knowledgeBaseId: selectedKnowledgeBaseId, limit: 50 }),
+    enabled: Boolean(selectedKnowledgeBaseId),
+  });
+
+  const visibleConversationId = conversations.data?.items.some(
+    (conversation) => conversation.id === activeConversationId,
+  )
+    ? activeConversationId
+    : selectedKnowledgeBaseId
+      ? readConversationId(selectedKnowledgeBaseId)
+      : null;
 
   useEffect(() => {
     if (!knowledgeBases.data?.length) return;
@@ -223,6 +238,8 @@ export function ChatPage() {
           setStatus("completed");
           if (pendingConversationId) {
             writeConversationId(values.knowledgeBaseId, pendingConversationId);
+            setActiveConversationId(pendingConversationId);
+            void queryClient.invalidateQueries({ queryKey: ["conversations", values.knowledgeBaseId] });
           }
           break;
         case "error":
@@ -262,6 +279,36 @@ export function ChatPage() {
 
   function stopGeneration() {
     activeController?.abort();
+  }
+
+  async function openConversation(conversationId: string) {
+    if (!selectedKnowledgeBaseId || isStreaming) return;
+    if (!conversationId) {
+      clearConversationId(selectedKnowledgeBaseId);
+      setActiveConversationId(null);
+      setSubmittedQuestion("");
+      setAnswer("");
+      setCitations([]);
+      setCompletionKind(null);
+      setStatus("idle");
+      return;
+    }
+    const page = await api.listConversationMessages(conversationId, { limit: 200 });
+    const assistant = [...page.items].reverse().find((item) => item.role === "assistant");
+    const user = assistant
+      ? [...page.items].reverse().find((item) => item.role === "user" && item.created_at <= assistant.created_at)
+      : undefined;
+    const restoredCitations = assistant?.citations.flatMap((item) => {
+      const parsed = citationSchema.safeParse(item);
+      return parsed.success ? [parsed.data] : [];
+    }) ?? [];
+    writeConversationId(selectedKnowledgeBaseId, conversationId);
+    setActiveConversationId(conversationId);
+    setSubmittedQuestion(user?.content ?? "");
+    setAnswer(assistant?.content ?? "");
+    setCitations(restoredCitations);
+    setCompletionKind(assistant ? (restoredCitations.length ? "grounded" : "no_evidence") : null);
+    setStatus(assistant ? "completed" : "idle");
   }
 
   async function copyAnswer() {
@@ -351,6 +398,26 @@ export function ChatPage() {
 
       <div className={styles.layout}>
         <section className={styles.workspace} aria-labelledby="chat-answer-title">
+          <div className={styles.historyBar}>
+            <label htmlFor="chat-conversation">{t("chat:conversationHistory")}</label>
+            <select
+              id="chat-conversation"
+              value={visibleConversationId ?? ""}
+              disabled={!selectedKnowledgeBaseId || conversations.isLoading || isStreaming}
+              onChange={(event) => void openConversation(event.target.value)}
+            >
+              <option value="">{t("chat:newConversation")}</option>
+              {conversations.data?.items.map((conversation) => (
+                <option key={conversation.id} value={conversation.id}>
+                  {conversation.title || conversation.id}
+                </option>
+              ))}
+            </select>
+            <Button type="button" variant="secondary" disabled={isStreaming} onClick={() => void openConversation("")}>
+              {t("chat:newConversation")}
+            </Button>
+          </div>
+          {conversations.isError ? <div className={styles.inlineError} role="alert">{t("chat:conversationHistoryError")}</div> : null}
           <form className={styles.composer} onSubmit={handleSubmit(startRun)}>
             <div className={styles.field}>
               <label htmlFor="chat-kb">{t("chat:knowledgeBaseLabel")}</label>

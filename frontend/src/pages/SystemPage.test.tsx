@@ -115,6 +115,5 @@ describe("SystemPage index operations", () => {
       String(url).endsWith("/api/v1/jobs/rebuild-index"),
     );
     expect((rebuildCall?.[1] as RequestInit).method).toBe("POST");
-    expect(window.sessionStorage.getItem("evidence-desk:known-job-ids")).toContain(jobId);
   });
 });
