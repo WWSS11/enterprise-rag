@@ -13,6 +13,19 @@ docker compose `
   --env-file $RootEnv `
   -f (Join-Path $ProjectRoot "infra\compose.yml") `
   up -d postgres redis etcd minio milvus keycloak
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker middleware failed to start. Ensure Docker Desktop is running and retry."
+}
+$KeycloakContainer = docker compose `
+  --env-file (Join-Path $ProjectRoot "infra\versions.env") `
+  --env-file $InfraEnv `
+  --env-file $RootEnv `
+  -f (Join-Path $ProjectRoot "infra\compose.yml") `
+  ps -q keycloak
+if ($LASTEXITCODE -ne 0 -or -not $KeycloakContainer) {
+    throw "Keycloak container was not created."
+}
+& (Join-Path $PSScriptRoot "assert-docker-clock.ps1") -ContainerId $KeycloakContainer.Trim()
 
 Write-Host "Middleware is ready. Application services run from .venv during development."
 Write-Host "Keycloak: http://127.0.0.1:18080 (realm: enterprise-rag)"

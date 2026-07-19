@@ -7,11 +7,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import request_identity
 from app.db.models import ChatMessage, Conversation
 from app.db.session import get_db
-from app.schemas.conversation import ChatMessagePage, ConversationPage
+from app.schemas.conversation import (
+    ChatMessagePage,
+    ConversationPage,
+    ConversationRead,
+    ConversationUpdate,
+)
 from app.security.identity import RequestIdentity
+from app.services.audit_service import record_audit
 from app.services.knowledge_base_service import knowledge_base_service
 
 router = APIRouter()
+
+
+def _message_window(
+    *, total: int, limit: int, offset: int, from_latest: bool
+) -> tuple[int, int]:
+    if not from_latest:
+        return offset, limit
+    page_end = max(total - offset, 0)
+    query_offset = max(page_end - limit, 0)
+    return query_offset, page_end - query_offset
 
 
 async def _owned_conversation(
@@ -78,11 +94,81 @@ async def list_conversations(
     return ConversationPage(items=items, total=total, limit=limit, offset=offset)
 
 
+@router.patch("/{conversation_id}", response_model=ConversationRead)
+async def update_conversation(
+    conversation_id: UUID,
+    payload: ConversationUpdate,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> Conversation:
+    conversation = await _owned_conversation(db, conversation_id, identity)
+    conversation.title = payload.title
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="conversations.updated",
+        resource_type="conversation",
+        resource_id=str(conversation.id),
+        details={"fields": ["title"]},
+    )
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
+
+
+@router.post("/{conversation_id}/archive", response_model=ConversationRead)
+async def archive_conversation(
+    conversation_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> Conversation:
+    conversation = await _owned_conversation(db, conversation_id, identity)
+    if conversation.status != "active":
+        raise HTTPException(status_code=409, detail="conversation is not active")
+    conversation.status = "archived"
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="conversations.archived",
+        resource_type="conversation",
+        resource_id=str(conversation.id),
+    )
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
+
+
+@router.post("/{conversation_id}/restore", response_model=ConversationRead)
+async def restore_conversation(
+    conversation_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> Conversation:
+    conversation = await _owned_conversation(db, conversation_id, identity)
+    if conversation.status != "archived":
+        raise HTTPException(status_code=409, detail="conversation is not archived")
+    conversation.status = "active"
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="conversations.restored",
+        resource_type="conversation",
+        resource_id=str(conversation.id),
+    )
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
+
+
 @router.get("/{conversation_id}/messages", response_model=ChatMessagePage)
 async def list_conversation_messages(
     conversation_id: UUID,
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    from_latest: bool = Query(default=True),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> ChatMessagePage:
@@ -91,15 +177,27 @@ async def list_conversation_messages(
     total = int(
         await db.scalar(select(func.count()).select_from(ChatMessage).where(*conditions)) or 0
     )
+    query_offset, query_limit = _message_window(
+        total=total,
+        limit=limit,
+        offset=offset,
+        from_latest=from_latest,
+    )
     items = list(
         (
             await db.execute(
                 select(ChatMessage)
                 .where(*conditions)
                 .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
-                .limit(limit)
-                .offset(offset)
+                .limit(query_limit)
+                .offset(query_offset)
             )
         ).scalars()
     )
-    return ChatMessagePage(items=items, total=total, limit=limit, offset=offset)
+    return ChatMessagePage(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(items) < total,
+    )

@@ -27,6 +27,8 @@ class ConversationService:
                 raise PermissionError("conversation does not belong to current tenant/user")
             if conversation.knowledge_base_id != knowledge_base_id:
                 raise ValueError("a conversation cannot switch knowledge bases")
+            if conversation.status != "active":
+                raise ValueError("an archived conversation cannot accept new messages")
             return conversation
 
         conversation = Conversation(

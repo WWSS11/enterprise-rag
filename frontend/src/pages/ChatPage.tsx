@@ -5,13 +5,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { citationSchema, type ChatStage, type Citation } from "@/api/types";
+import { type ChatMessage, type ChatStage, type Citation } from "@/api/types";
 import { isApiError } from "@/api/errors";
 import { useAuth } from "@/auth/useAuth";
 import { Button } from "@/components/Button";
 import { RequestId } from "@/components/RequestId";
 import { TechnicalDetails } from "@/components/TechnicalDetails";
 import { AnswerMarkdown } from "@/chat/AnswerMarkdown";
+import { ConversationTranscript } from "@/chat/ConversationTranscript";
 import { EvidenceDesk } from "@/chat/EvidenceDesk";
 import { StagePipeline, type StageStatus } from "@/chat/StagePipeline";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -113,6 +114,17 @@ export function ChatPage() {
   const mobileEvidence = useMediaQuery("(max-width: 780px)");
   const [copyNotice, setCopyNotice] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversationStatus, setConversationStatus] = useState<"active" | "archived">("active");
+  const [conversationMessages, setConversationMessages] = useState<ChatMessage[]>([]);
+  const [conversationMessageTotal, setConversationMessageTotal] = useState(0);
+  const [conversationHasMore, setConversationHasMore] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationLoadError, setConversationLoadError] = useState(false);
+  const [conversationActionError, setConversationActionError] = useState(false);
+  const [conversationActionBusy, setConversationActionBusy] = useState(false);
+  const [renamingConversation, setRenamingConversation] = useState(false);
+  const [conversationTitle, setConversationTitle] = useState("");
+  const autoOpenedConversation = useRef<string | null>(null);
 
   const knowledgeBases = useQuery({
     queryKey: ["knowledge-bases", "chat-selector"],
@@ -131,9 +143,14 @@ export function ChatPage() {
   });
 
   const selectedKnowledgeBaseId = useWatch({ control, name: "knowledgeBaseId" });
+  const knowledgeBaseRegistration = register("knowledgeBaseId");
   const conversations = useQuery({
-    queryKey: ["conversations", selectedKnowledgeBaseId],
-    queryFn: () => api.listConversations({ knowledgeBaseId: selectedKnowledgeBaseId, limit: 50 }),
+    queryKey: ["conversations", selectedKnowledgeBaseId, conversationStatus],
+    queryFn: () => api.listConversations({
+      knowledgeBaseId: selectedKnowledgeBaseId,
+      status: conversationStatus,
+      limit: 50,
+    }),
     enabled: Boolean(selectedKnowledgeBaseId),
   });
 
@@ -141,9 +158,12 @@ export function ChatPage() {
     (conversation) => conversation.id === activeConversationId,
   )
     ? activeConversationId
-    : selectedKnowledgeBaseId
+    : selectedKnowledgeBaseId && conversationStatus === "active"
       ? readConversationId(selectedKnowledgeBaseId)
       : null;
+  const activeConversation = conversations.data?.items.find(
+    (conversation) => conversation.id === visibleConversationId,
+  );
 
   useEffect(() => {
     if (!knowledgeBases.data?.length) return;
@@ -175,6 +195,68 @@ export function ChatPage() {
     },
     [activeController],
   );
+
+  useEffect(() => {
+    if (
+      conversationStatus !== "active" ||
+      !selectedKnowledgeBaseId ||
+      !conversations.data ||
+      activeConversationId
+    ) return;
+    const storedConversationId = readConversationId(selectedKnowledgeBaseId);
+    if (
+      !storedConversationId ||
+      !conversations.data.items.some((item) => item.id === storedConversationId)
+    ) return;
+    const autoOpenKey = `${selectedKnowledgeBaseId}:${storedConversationId}`;
+    if (autoOpenedConversation.current === autoOpenKey) return;
+    autoOpenedConversation.current = autoOpenKey;
+    let cancelled = false;
+    void api.listConversationMessages(storedConversationId, {
+      limit: 50,
+      offset: 0,
+      fromLatest: true,
+    }).then((page) => {
+      if (cancelled) return;
+      setActiveConversationId(storedConversationId);
+      setConversationMessages(page.items);
+      setConversationMessageTotal(page.total);
+      setConversationHasMore(page.has_more);
+      setConversationLoadError(false);
+    }).catch(() => {
+      if (!cancelled) setConversationLoadError(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeConversationId,
+    api,
+    conversationStatus,
+    conversations.data,
+    selectedKnowledgeBaseId,
+  ]);
+
+  function resetConversationSelection() {
+    setActiveConversationId(null);
+    setConversationMessages([]);
+    setConversationMessageTotal(0);
+    setConversationHasMore(false);
+    setConversationLoadError(false);
+    setConversationActionError(false);
+    setRenamingConversation(false);
+    setSubmittedQuestion("");
+    setAnswer("");
+    setCitations([]);
+    setCompletionKind(null);
+    setStatus("idle");
+    autoOpenedConversation.current = null;
+  }
+
+  function changeConversationStatusFilter(next: "active" | "archived") {
+    resetConversationSelection();
+    setConversationStatus(next);
+  }
 
   async function startRun(values: FormValues) {
     if (activeController) return;
@@ -252,7 +334,8 @@ export function ChatPage() {
         {
           question: values.question.trim(),
           knowledge_base_id: values.knowledgeBaseId,
-          conversation_id: readConversationId(values.knowledgeBaseId),
+          conversation_id:
+            activeConversationId ?? readConversationId(values.knowledgeBaseId),
         },
         handleEvent,
         controller.signal,
@@ -286,6 +369,12 @@ export function ChatPage() {
     if (!conversationId) {
       clearConversationId(selectedKnowledgeBaseId);
       setActiveConversationId(null);
+      setConversationMessages([]);
+      setConversationMessageTotal(0);
+      setConversationHasMore(false);
+      setConversationLoadError(false);
+      setConversationActionError(false);
+      setRenamingConversation(false);
       setSubmittedQuestion("");
       setAnswer("");
       setCitations([]);
@@ -293,22 +382,97 @@ export function ChatPage() {
       setStatus("idle");
       return;
     }
-    const page = await api.listConversationMessages(conversationId, { limit: 200 });
-    const assistant = [...page.items].reverse().find((item) => item.role === "assistant");
-    const user = assistant
-      ? [...page.items].reverse().find((item) => item.role === "user" && item.created_at <= assistant.created_at)
-      : undefined;
-    const restoredCitations = assistant?.citations.flatMap((item) => {
-      const parsed = citationSchema.safeParse(item);
-      return parsed.success ? [parsed.data] : [];
-    }) ?? [];
-    writeConversationId(selectedKnowledgeBaseId, conversationId);
-    setActiveConversationId(conversationId);
-    setSubmittedQuestion(user?.content ?? "");
-    setAnswer(assistant?.content ?? "");
-    setCitations(restoredCitations);
-    setCompletionKind(assistant ? (restoredCitations.length ? "grounded" : "no_evidence") : null);
-    setStatus(assistant ? "completed" : "idle");
+    setConversationLoading(true);
+    setConversationLoadError(false);
+    setConversationActionError(false);
+    try {
+      const page = await api.listConversationMessages(conversationId, {
+        limit: 50,
+        offset: 0,
+        fromLatest: true,
+      });
+      if (conversationStatus === "active") {
+        writeConversationId(selectedKnowledgeBaseId, conversationId);
+      }
+      setActiveConversationId(conversationId);
+      setConversationMessages(page.items);
+      setConversationMessageTotal(page.total);
+      setConversationHasMore(page.has_more);
+      setSubmittedQuestion("");
+      setAnswer("");
+      setCitations([]);
+      setCompletionKind(null);
+      setStatus("idle");
+      const selected = conversations.data?.items.find((item) => item.id === conversationId);
+      setConversationTitle(selected?.title ?? "");
+      setRenamingConversation(false);
+    } catch {
+      setConversationLoadError(true);
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
+  async function loadEarlierMessages() {
+    if (!activeConversationId || conversationLoading || !conversationHasMore) return;
+    setConversationLoading(true);
+    setConversationLoadError(false);
+    try {
+      const page = await api.listConversationMessages(activeConversationId, {
+        limit: 50,
+        offset: conversationMessages.length,
+        fromLatest: true,
+      });
+      setConversationMessages((current) => {
+        const currentIds = new Set(current.map((item) => item.id));
+        return [...page.items.filter((item) => !currentIds.has(item.id)), ...current];
+      });
+      setConversationMessageTotal(page.total);
+      setConversationHasMore(page.has_more);
+    } catch {
+      setConversationLoadError(true);
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
+  async function renameConversation() {
+    if (!activeConversationId || !conversationTitle.trim()) return;
+    setConversationActionBusy(true);
+    setConversationActionError(false);
+    try {
+      await api.updateConversation(activeConversationId, conversationTitle.trim());
+      await queryClient.invalidateQueries({
+        queryKey: ["conversations", selectedKnowledgeBaseId],
+      });
+      setRenamingConversation(false);
+    } catch {
+      setConversationActionError(true);
+    } finally {
+      setConversationActionBusy(false);
+    }
+  }
+
+  async function changeConversationArchiveState() {
+    if (!activeConversationId || !selectedKnowledgeBaseId) return;
+    setConversationActionBusy(true);
+    setConversationActionError(false);
+    try {
+      if (conversationStatus === "active") {
+        await api.archiveConversation(activeConversationId);
+        clearConversationId(selectedKnowledgeBaseId);
+        changeConversationStatusFilter("archived");
+      } else {
+        await api.restoreConversation(activeConversationId);
+        writeConversationId(selectedKnowledgeBaseId, activeConversationId);
+        changeConversationStatusFilter("active");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["conversations", selectedKnowledgeBaseId] });
+    } catch {
+      setConversationActionError(true);
+    } finally {
+      setConversationActionBusy(false);
+    }
   }
 
   async function copyAnswer() {
@@ -401,30 +565,129 @@ export function ChatPage() {
           <div className={styles.historyBar}>
             <label htmlFor="chat-conversation">{t("chat:conversationHistory")}</label>
             <select
+              className={styles.statusFilter}
+              aria-label={t("chat:conversationStatusFilter")}
+              value={conversationStatus}
+              disabled={isStreaming}
+              onChange={(event) => changeConversationStatusFilter(event.target.value as "active" | "archived")}
+            >
+              <option value="active">{t("chat:activeConversations")}</option>
+              <option value="archived">{t("chat:archivedConversations")}</option>
+            </select>
+            <select
               id="chat-conversation"
               value={visibleConversationId ?? ""}
               disabled={!selectedKnowledgeBaseId || conversations.isLoading || isStreaming}
               onChange={(event) => void openConversation(event.target.value)}
             >
-              <option value="">{t("chat:newConversation")}</option>
+              <option value="">
+                {conversationStatus === "active"
+                  ? t("chat:newConversation")
+                  : t("chat:chooseArchivedConversationOption")}
+              </option>
               {conversations.data?.items.map((conversation) => (
                 <option key={conversation.id} value={conversation.id}>
                   {conversation.title || conversation.id}
                 </option>
               ))}
             </select>
-            <Button type="button" variant="secondary" disabled={isStreaming} onClick={() => void openConversation("")}>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isStreaming}
+              onClick={() => {
+                if (conversationStatus !== "active") changeConversationStatusFilter("active");
+                else void openConversation("");
+              }}
+            >
               {t("chat:newConversation")}
             </Button>
           </div>
           {conversations.isError ? <div className={styles.inlineError} role="alert">{t("chat:conversationHistoryError")}</div> : null}
+          {activeConversation ? (
+            <div className={styles.conversationActions}>
+              {renamingConversation ? (
+                <form
+                  className={styles.renameForm}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void renameConversation();
+                  }}
+                >
+                  <label htmlFor="conversation-title">{t("chat:conversationTitle")}</label>
+                  <input
+                    id="conversation-title"
+                    value={conversationTitle}
+                    maxLength={255}
+                    autoFocus
+                    onChange={(event) => setConversationTitle(event.target.value)}
+                  />
+                  <Button type="submit" disabled={conversationActionBusy || !conversationTitle.trim()}>
+                    {t("chat:saveTitle")}
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => setRenamingConversation(false)}>
+                    {t("common:cancel")}
+                  </Button>
+                </form>
+              ) : (
+                <>
+                  <span className={styles.conversationSummary}>
+                    {activeConversation.title || activeConversation.id}
+                    <small>{t("chat:messageCount", { count: conversationMessageTotal })}</small>
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={conversationActionBusy}
+                    onClick={() => {
+                      setConversationTitle(activeConversation.title ?? "");
+                      setRenamingConversation(true);
+                    }}
+                  >
+                    {t("chat:renameConversation")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={conversationActionBusy}
+                    onClick={() => void changeConversationArchiveState()}
+                  >
+                    {conversationStatus === "active"
+                      ? t("chat:archiveConversation")
+                      : t("chat:restoreConversation")}
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : null}
+          {conversationActionError ? (
+            <div className={styles.inlineError} role="alert">{t("chat:conversationActionError")}</div>
+          ) : null}
+          <ConversationTranscript
+            messages={conversationMessages}
+            hasMore={conversationHasMore}
+            loading={conversationLoading}
+            error={conversationLoadError}
+            onLoadEarlier={() => void loadEarlierMessages()}
+          />
+          {conversationStatus === "archived" ? (
+            <div className={styles.archivedNotice} role="status">
+              {activeConversation
+                ? t("chat:archivedReadOnly")
+                : t("chat:chooseArchivedConversation")}
+            </div>
+          ) : null}
           <form className={styles.composer} onSubmit={handleSubmit(startRun)}>
             <div className={styles.field}>
               <label htmlFor="chat-kb">{t("chat:knowledgeBaseLabel")}</label>
               <select
                 id="chat-kb"
-                {...register("knowledgeBaseId")}
+                {...knowledgeBaseRegistration}
                 disabled={isStreaming || knowledgeBases.isLoading || !hasKnowledgeBases}
+                onChange={(event) => {
+                  resetConversationSelection();
+                  void knowledgeBaseRegistration.onChange(event);
+                }}
               >
                 <option value="">
                   {knowledgeBases.isLoading
@@ -469,7 +732,7 @@ export function ChatPage() {
                 maxLength={8000}
                 {...register("question")}
                 placeholder={t("chat:questionPlaceholder")}
-                disabled={isStreaming || !hasKnowledgeBases}
+                disabled={isStreaming || !hasKnowledgeBases || conversationStatus === "archived"}
                 onKeyDown={(event) => {
                   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
                     event.preventDefault();
@@ -493,7 +756,7 @@ export function ChatPage() {
                   {t("chat:stop")}
                 </Button>
               ) : (
-                <Button type="submit" disabled={!hasKnowledgeBases}>
+                <Button type="submit" disabled={!hasKnowledgeBases || conversationStatus === "archived"}>
                   {t("chat:send")}
                 </Button>
               )}

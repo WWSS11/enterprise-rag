@@ -99,27 +99,75 @@ test.describe("Chat + Evidence Desk mocked SSE", () => {
         body: sse,
       });
     });
-    await page.route("**/api/v1/conversations**", (route) =>
-      route.fulfill({
+    let storedTitle = "访问需要什么审批？";
+    let storedStatus = "active";
+    await page.route("**/api/v1/conversations**", async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const conversation = {
+        id: conversationId,
+        knowledge_base_id: kbId,
+        title: storedTitle,
+        status: storedStatus,
+        created_at: "2026-07-14T00:00:00Z",
+        updated_at: "2026-07-14T00:00:00Z",
+      };
+      if (url.pathname.endsWith("/messages")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              {
+                id: "33333333-3333-4333-8333-333333333333",
+                conversation_id: conversationId,
+                role: "user",
+                content: "访问需要什么审批？",
+                citations: [],
+                token_usage: {},
+                created_at: "2026-07-14T00:00:00Z",
+              },
+              {
+                id: "44444444-4444-4444-8444-444444444444",
+                conversation_id: conversationId,
+                role: "assistant",
+                content: "根据制度，访问需要审批。",
+                citations: [],
+                token_usage: {},
+                created_at: "2026-07-14T00:00:01Z",
+              },
+            ],
+            total: 2,
+            limit: 50,
+            offset: 0,
+            has_more: false,
+          }),
+        });
+        return;
+      }
+      if (request.method() === "PATCH") {
+        storedTitle = (request.postDataJSON() as { title: string }).title;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...conversation, title: storedTitle }) });
+        return;
+      }
+      if (url.pathname.endsWith("/archive")) {
+        storedStatus = "archived";
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...conversation, status: storedStatus }) });
+        return;
+      }
+      if (url.pathname.endsWith("/restore")) {
+        storedStatus = "active";
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...conversation, status: storedStatus }) });
+        return;
+      }
+      const requestedStatus = url.searchParams.get("status") ?? "active";
+      const items = requestedStatus === storedStatus ? [{ ...conversation, title: storedTitle, status: storedStatus }] : [];
+      await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            {
-              id: conversationId,
-              knowledge_base_id: kbId,
-              title: "访问需要什么审批？",
-              status: "active",
-              created_at: "2026-07-14T00:00:00Z",
-              updated_at: "2026-07-14T00:00:00Z",
-            },
-          ],
-          total: 1,
-          limit: 50,
-          offset: 0,
-        }),
-      }),
-    );
+        body: JSON.stringify({ items, total: items.length, limit: 50, offset: 0 }),
+      });
+    });
     await seedMockAuthenticatedSession(page);
   });
 
@@ -150,6 +198,19 @@ test.describe("Chat + Evidence Desk mocked SSE", () => {
       const storedConversation = await page.evaluate((id) =>
         window.sessionStorage.getItem(`evidence-desk:conversation-id:${id}`), kbId);
       expect(storedConversation).toBe(conversationId);
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "完整会话记录" })).toBeVisible();
+      await expect(page.getByText("根据制度，访问需要审批。", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "重命名" }).click();
+      await page.getByLabel("会话标题").fill("访问审批复核");
+      await page.getByRole("button", { name: "保存标题" }).click();
+      await expect(page.getByLabel("会话历史").locator("option:checked")).toHaveText("访问审批复核");
+      await page.getByRole("button", { name: "归档会话" }).click();
+      await expect(page.getByText(/请选择一个已归档会话/)).toBeVisible();
+      await page.getByLabel("会话历史").selectOption(conversationId);
+      await expect(page.getByText(/当前为只读状态/)).toBeVisible();
+      await page.getByRole("button", { name: "恢复会话" }).click();
+      await expect(page.getByLabel("会话历史").locator("option:checked")).toHaveText("访问审批复核");
       await assertNoAccessTokenInLocalStorage(page);
       await assertSessionStorageHasOidcUser(page);
 
