@@ -1,15 +1,19 @@
 from typing import cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import IngestionJob, KnowledgeBase
+from app.api.v1.conversations import _message_window
+from app.db.models import Conversation, IngestionJob, KnowledgeBase
 from app.main import app
+from app.schemas.conversation import ConversationUpdate
 from app.schemas.document import JobPage
 from app.schemas.knowledge_base import KnowledgeBaseUpdate
 from app.security.identity import RequestIdentity
+from app.services.conversation_service import conversation_service
 from app.services.knowledge_base_service import knowledge_base_service
 
 
@@ -27,6 +31,9 @@ def test_control_plane_history_routes_are_published() -> None:
     assert expected <= paths.keys()
     assert "get" in paths["/api/v1/jobs"]
     assert "get" in paths["/api/v1/evaluations/runs"]
+    assert "patch" in paths["/api/v1/conversations/{conversation_id}"]
+    assert "post" in paths["/api/v1/conversations/{conversation_id}/archive"]
+    assert "post" in paths["/api/v1/conversations/{conversation_id}/restore"]
     assert "patch" in paths["/api/v1/knowledge-bases/{knowledge_base_id}"]
     assert "post" in paths["/api/v1/knowledge-bases/{knowledge_base_id}/archive"]
     assert "post" in paths["/api/v1/knowledge-bases/{knowledge_base_id}/restore"]
@@ -57,6 +64,48 @@ def test_knowledge_base_update_requires_an_explicit_change() -> None:
     assert KnowledgeBaseUpdate(description=None).model_dump(exclude_unset=True) == {
         "description": None
     }
+
+
+def test_conversation_update_requires_a_nonempty_bounded_title() -> None:
+    with pytest.raises(ValidationError):
+        ConversationUpdate(title="")
+    with pytest.raises(ValidationError):
+        ConversationUpdate(title="   ")
+    with pytest.raises(ValidationError):
+        ConversationUpdate(title="x" * 256)
+    assert ConversationUpdate(title="Security review").title == "Security review"
+
+
+def test_latest_message_windows_do_not_overlap() -> None:
+    assert _message_window(total=120, limit=50, offset=0, from_latest=True) == (70, 50)
+    assert _message_window(total=120, limit=50, offset=50, from_latest=True) == (20, 50)
+    assert _message_window(total=120, limit=50, offset=100, from_latest=True) == (0, 20)
+    assert _message_window(total=120, limit=50, offset=120, from_latest=True) == (0, 0)
+    assert _message_window(total=120, limit=50, offset=30, from_latest=False) == (30, 50)
+
+
+@pytest.mark.asyncio
+async def test_archived_conversation_cannot_accept_new_messages() -> None:
+    conversation = Conversation(
+        id=uuid4(),
+        tenant_id="tenant-a",
+        knowledge_base_id=uuid4(),
+        user_id="user-a",
+        title="Archived",
+        status="archived",
+    )
+    db = AsyncMock(spec=AsyncSession)
+    db.get.return_value = conversation
+
+    with pytest.raises(ValueError, match="archived conversation"):
+        await conversation_service.get_or_create(
+            db,
+            conversation.id,
+            "tenant-a",
+            "user-a",
+            conversation.knowledge_base_id,
+            "Can this continue?",
+        )
 
 
 @pytest.mark.asyncio

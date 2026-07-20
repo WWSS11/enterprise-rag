@@ -5,6 +5,7 @@ import { ApiError } from "./errors";
 const kbId = "11111111-1111-4111-8111-111111111111";
 const documentId = "22222222-2222-4222-8222-222222222222";
 const jobId = "33333333-3333-4333-8333-333333333333";
+const conversationId = "55555555-5555-4555-8555-555555555555";
 
 function knowledgeBase() {
   return {
@@ -366,6 +367,56 @@ describe("Knowledge Base Ops API client", () => {
       name: "Security policies",
       description: null,
       access_mode: "tenant",
+    });
+  });
+
+  it("uses server conversation history, rename, archive, and restore contracts", async () => {
+    const conversation = {
+      id: conversationId,
+      knowledge_base_id: kbId,
+      title: "Security review",
+      status: "active",
+      created_at: "2026-07-15T00:00:00Z",
+      updated_at: "2026-07-15T00:00:00Z",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).includes("/messages")) {
+        return new Response(JSON.stringify({
+          items: [], total: 0, limit: 50, offset: 0, has_more: false,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(conversation), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const api = createApiClient({
+      baseUrl: "http://api.test",
+      getAccessToken: async () => "token",
+      renewAccessToken: async () => null,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await api.listConversationMessages(conversationId, {
+      limit: 50,
+      offset: 50,
+      fromLatest: true,
+    });
+    await api.updateConversation(conversationId, "Security review");
+    await api.archiveConversation(conversationId);
+    await api.restoreConversation(conversationId);
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      `http://api.test/api/v1/conversations/${conversationId}/messages?limit=50&offset=50&from_latest=true`,
+      `http://api.test/api/v1/conversations/${conversationId}`,
+      `http://api.test/api/v1/conversations/${conversationId}/archive`,
+      `http://api.test/api/v1/conversations/${conversationId}/restore`,
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => (init as RequestInit).method)).toEqual([
+      "GET", "PATCH", "POST", "POST",
+    ]);
+    expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({
+      title: "Security review",
     });
   });
 });

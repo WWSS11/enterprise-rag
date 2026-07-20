@@ -291,6 +291,7 @@ export const chatMessagePageSchema = z.object({
   total: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
   offset: z.number().int().nonnegative(),
+  has_more: z.boolean(),
 });
 export type ChatMessagePage = z.infer<typeof chatMessagePageSchema>;
 

@@ -14,6 +14,13 @@ docker compose --env-file $VersionsEnv --env-file $InfraEnv --env-file $RootEnv 
     -f $Compose ps `
     postgres redis etcd minio milvus keycloak
 
+$KeycloakContainer = docker compose --env-file $VersionsEnv --env-file $InfraEnv --env-file $RootEnv `
+    -f $Compose ps -q keycloak
+if ($LASTEXITCODE -ne 0 -or -not $KeycloakContainer) {
+    throw "Keycloak container is not running."
+}
+& (Join-Path $PSScriptRoot "assert-docker-clock.ps1") -ContainerId $KeycloakContainer.Trim()
+
 $DiscoveryUrl = "http://127.0.0.1:18080/realms/enterprise-rag/.well-known/openid-configuration"
 $Discovery = Invoke-RestMethod -Uri $DiscoveryUrl -TimeoutSec 10
 if ($Discovery.issuer -ne "http://127.0.0.1:18080/realms/enterprise-rag") {

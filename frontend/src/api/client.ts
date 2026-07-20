@@ -18,6 +18,7 @@ import {
   localScanRequestSchema,
   jobSchema,
   jobPageSchema,
+  conversationSchema,
   conversationPageSchema,
   chatMessagePageSchema,
   auditLogPageSchema,
@@ -50,6 +51,7 @@ import {
   type LocalScanRequest,
   type Job,
   type JobPage,
+  type Conversation,
   type ConversationPage,
   type ChatMessagePage,
   type AuditLogPage,
@@ -692,13 +694,46 @@ export function createApiClient(options: ApiClientOptions) {
 
     listConversationMessages(
       conversationId: string,
-      filters: { limit?: number; offset?: number } = {},
+      filters: { limit?: number; offset?: number; fromLatest?: boolean } = {},
     ): Promise<ChatMessagePage> {
       const path = withQuery(
         `/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
-        filters,
+        {
+          limit: filters.limit,
+          offset: filters.offset,
+          from_latest:
+            filters.fromLatest === undefined ? undefined : String(filters.fromLatest),
+        },
       );
       return request(path, { method: "GET" }, (data) => chatMessagePageSchema.parse(data));
+    },
+
+    updateConversation(conversationId: string, title: string): Promise<Conversation> {
+      return request(
+        `/api/v1/conversations/${encodeURIComponent(conversationId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title }),
+        },
+        (data) => conversationSchema.parse(data),
+      );
+    },
+
+    archiveConversation(conversationId: string): Promise<Conversation> {
+      return request(
+        `/api/v1/conversations/${encodeURIComponent(conversationId)}/archive`,
+        { method: "POST" },
+        (data) => conversationSchema.parse(data),
+      );
+    },
+
+    restoreConversation(conversationId: string): Promise<Conversation> {
+      return request(
+        `/api/v1/conversations/${encodeURIComponent(conversationId)}/restore`,
+        { method: "POST" },
+        (data) => conversationSchema.parse(data),
+      );
     },
 
     listAuditLogs(filters: {
