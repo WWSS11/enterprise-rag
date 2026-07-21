@@ -184,7 +184,9 @@ describe("Evaluation Console API client", () => {
       .mockResolvedValueOnce(jsonResponse(evaluationDataset(), { status: 201 }))
       .mockResolvedValueOnce(jsonResponse(evaluationDataset()))
       .mockResolvedValueOnce(jsonResponse(evaluationCase(), { status: 201 }))
-      .mockResolvedValueOnce(jsonResponse([evaluationCase()]))
+      .mockResolvedValueOnce(jsonResponse({
+        items: [evaluationCase()], total: 1, limit: 20, offset: 0,
+      }))
       .mockResolvedValueOnce(jsonResponse(evaluationRun(), { status: 202 }))
       .mockResolvedValueOnce(jsonResponse(evaluationRun()))
       .mockResolvedValueOnce(jsonResponse(evaluationReport()))
@@ -230,6 +232,41 @@ describe("Evaluation Console API client", () => {
     });
     expect(report.results[0].total_latency_ms).toBeUndefined();
     expect(compared.metrics[1].candidate).toBeUndefined();
+  });
+
+  it("uses paginated case filters and real update/delete contracts", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        items: [evaluationCase()], total: 1, limit: 10, offset: 0,
+      }))
+      .mockResolvedValueOnce(jsonResponse(evaluationCase()))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const api = createClient(fetchImpl);
+    const payload = {
+      question: "What is the retention period?",
+      reference_answer: "Seven years.",
+      expected_document_ids: [documentId],
+    };
+
+    await api.listEvaluationCases(datasetId, {
+      query: "retention",
+      shouldRefuse: false,
+      limit: 10,
+      offset: 0,
+    });
+    await api.updateEvaluationCase(datasetId, caseId, payload);
+    await api.deleteEvaluationCase(datasetId, caseId);
+
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      `http://api.test/api/v1/evaluations/datasets/${datasetId}/cases?q=retention&should_refuse=false&limit=10&offset=0`,
+      `http://api.test/api/v1/evaluations/datasets/${datasetId}/cases/${caseId}`,
+      `http://api.test/api/v1/evaluations/datasets/${datasetId}/cases/${caseId}`,
+    ]);
+    expect(fetchImpl.mock.calls.map((call) => (call[1] as RequestInit).method)).toEqual([
+      "GET", "PUT", "DELETE",
+    ]);
+    expect(JSON.parse(String((fetchImpl.mock.calls[1][1] as RequestInit).body))).toEqual(payload);
   });
 
   it("creates cases through the real bulk endpoint", async () => {

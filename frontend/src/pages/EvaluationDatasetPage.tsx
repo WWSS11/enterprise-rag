@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -11,11 +11,14 @@ import { EmptyState } from "@/components/EmptyState";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill } from "@/components/StatusPill";
 import { EvaluationCaseForm } from "@/evaluations/EvaluationCaseForm";
+import { EvaluationCaseTable } from "@/evaluations/EvaluationCaseTable";
+import type { EvaluationCase } from "@/api/types";
 import { canEditKnowledgeBase } from "@/knowledgeBases/permissions";
 import styles from "./EvaluationConsole.module.css";
 
 const uuidSchema = z.string().uuid();
 const RUN_PAGE_SIZE = 10;
+const CASE_PAGE_SIZE = 10;
 
 export function EvaluationDatasetPage() {
   const { datasetId = "" } = useParams<{ datasetId: string }>();
@@ -29,19 +32,53 @@ export function EvaluationDatasetPage() {
   const [runValidation, setRunValidation] = useState<string | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState("");
   const [runOffset, setRunOffset] = useState(0);
+  const [caseOffset, setCaseOffset] = useState(0);
+  const [caseQueryDraft, setCaseQueryDraft] = useState("");
+  const [caseQuery, setCaseQuery] = useState("");
+  const [caseTypeFilter, setCaseTypeFilter] = useState("");
+  const [caseEditor, setCaseEditor] = useState<{ mode: "create" | "edit"; item?: EvaluationCase } | null>(null);
+  const [confirmDeleteCaseId, setConfirmDeleteCaseId] = useState<string | null>(null);
+  const editorRef = useRef<HTMLElement | null>(null);
 
   const dataset = useQuery({ queryKey: ["evaluation-dataset", datasetId], queryFn: () => api.getEvaluationDataset(datasetId), enabled: Boolean(datasetId) });
   const knowledgeBases = useQuery({ queryKey: ["knowledge-bases"], queryFn: () => api.listKnowledgeBases() });
-  const cases = useQuery({ queryKey: ["evaluation-cases", datasetId], queryFn: () => api.listEvaluationCases(datasetId), enabled: Boolean(dataset.data) });
+  const cases = useQuery({
+    queryKey: ["evaluation-cases", datasetId, caseQuery, caseTypeFilter, caseOffset],
+    queryFn: () => api.listEvaluationCases(datasetId, {
+      query: caseQuery || undefined,
+      shouldRefuse: caseTypeFilter === "refusal" ? true : caseTypeFilter === "answerable" ? false : undefined,
+      limit: CASE_PAGE_SIZE,
+      offset: caseOffset,
+    }),
+    enabled: Boolean(dataset.data),
+  });
+  const caseCount = useQuery({
+    queryKey: ["evaluation-cases", datasetId, "count"],
+    queryFn: () => api.listEvaluationCases(datasetId, { limit: 1, offset: 0 }),
+    enabled: Boolean(dataset.data && (caseQuery || caseTypeFilter)),
+  });
   const documents = useQuery({ queryKey: ["documents", dataset.data?.knowledge_base_id], queryFn: () => api.listDocuments(dataset.data!.knowledge_base_id), enabled: Boolean(dataset.data) });
   const runs = useQuery({ queryKey: ["evaluation-runs", datasetId, runStatusFilter, runOffset], queryFn: () => api.listEvaluationRuns({ datasetId, status: runStatusFilter || undefined, limit: RUN_PAGE_SIZE, offset: runOffset }), enabled: Boolean(dataset.data) });
   const knowledgeBase = knowledgeBases.data?.find((item) => item.id === dataset.data?.knowledge_base_id);
   const canEdit = Boolean(knowledgeBase && canEditKnowledgeBase(identity, knowledgeBase));
   const readyDocuments = documents.data?.filter((item) => item.status === "ready") ?? [];
+  const datasetCaseTotal = caseQuery || caseTypeFilter ? caseCount.data?.total : cases.data?.total;
 
   const createCase = useMutation({
     mutationFn: (payload: Parameters<typeof api.createEvaluationCase>[1]) => api.createEvaluationCase(datasetId, payload),
-    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["evaluation-cases", datasetId] }); },
+    onSuccess: async () => { setCaseEditor(null); setCaseOffset(0); await queryClient.invalidateQueries({ queryKey: ["evaluation-cases", datasetId] }); },
+  });
+  const updateCase = useMutation({
+    mutationFn: ({ caseId, payload }: { caseId: string; payload: Parameters<typeof api.updateEvaluationCase>[2] }) => api.updateEvaluationCase(datasetId, caseId, payload),
+    onSuccess: async () => { setCaseEditor(null); await queryClient.invalidateQueries({ queryKey: ["evaluation-cases", datasetId] }); },
+  });
+  const deleteCase = useMutation({
+    mutationFn: (caseId: string) => api.deleteEvaluationCase(datasetId, caseId),
+    onSuccess: async () => {
+      setConfirmDeleteCaseId(null);
+      if ((cases.data?.items.length ?? 0) === 1 && caseOffset > 0) setCaseOffset(Math.max(0, caseOffset - CASE_PAGE_SIZE));
+      await queryClient.invalidateQueries({ queryKey: ["evaluation-cases", datasetId] });
+    },
   });
   const startRun = useMutation({
     mutationFn: () => api.createEvaluationRun({ dataset_id: datasetId }),
@@ -78,23 +115,55 @@ export function EvaluationDatasetPage() {
       <section className={styles.panel} aria-labelledby="dataset-metadata-title">
         <div className={styles.sectionHeader}><h2 id="dataset-metadata-title">{t("evaluations:detailTitle")}</h2><StatusPill tone={dataset.data.status === "active" ? "ok" : "unknown"} label={dataset.data.status === "active" ? t("evaluations:statusActive") : t("evaluations:statusUnknown", { status: dataset.data.status })} /></div>
         <dl className={styles.factGrid}>
-          <div><dt>{t("evaluations:datasetId")}</dt><dd><code>{dataset.data.id}</code></dd></div><div><dt>{t("evaluations:knowledgeBase")}</dt><dd>{knowledgeBase?.name || <code>{dataset.data.knowledge_base_id}</code>}</dd></div><div><dt>{t("evaluations:createdBy")}</dt><dd><code>{dataset.data.created_by}</code></dd></div><div><dt>{t("evaluations:createdAt")}</dt><dd>{formatDateTime(locale, dataset.data.created_at)}</dd></div><div><dt>{t("evaluations:updatedAt")}</dt><dd>{formatDateTime(locale, dataset.data.updated_at)}</dd></div><div><dt>{t("evaluationRuns:totalCases")}</dt><dd className={styles.monoMetric}>{cases.data?.length ?? "—"}</dd></div>
+          <div><dt>{t("evaluations:datasetId")}</dt><dd><code>{dataset.data.id}</code></dd></div><div><dt>{t("evaluations:knowledgeBase")}</dt><dd>{knowledgeBase?.name || <code>{dataset.data.knowledge_base_id}</code>}</dd></div><div><dt>{t("evaluations:createdBy")}</dt><dd><code>{dataset.data.created_by}</code></dd></div><div><dt>{t("evaluations:createdAt")}</dt><dd>{formatDateTime(locale, dataset.data.created_at)}</dd></div><div><dt>{t("evaluations:updatedAt")}</dt><dd>{formatDateTime(locale, dataset.data.updated_at)}</dd></div><div><dt>{t("evaluationRuns:totalCases")}</dt><dd className={styles.monoMetric}>{datasetCaseTotal ?? "—"}</dd></div>
         </dl>
       </section>
 
       <section className={styles.noticeSection}><h2>{t("evaluations:permissionTitle")}</h2><p>{canEdit ? t("evaluations:permissionEditor") : t("evaluations:permissionReadOnly")}</p></section>
 
+      {canEdit && caseEditor ? (
+        <section ref={editorRef} className={styles.panel} aria-labelledby="case-editor-title">
+          <div className={styles.sectionHeader}><div><h2 id="case-editor-title">{caseEditor.mode === "edit" ? t("evaluationCases:editTitle") : t("evaluationCases:createTitle")}</h2><p>{caseEditor.mode === "edit" ? t("evaluationCases:editSubtitle") : t("evaluationCases:createSubtitle")}</p></div></div>
+          {documents.isLoading ? <p className={styles.loading}>{t("common:loading")}</p> : documents.isError ? <OperationError error={documents.error} onRetry={() => void documents.refetch()} /> : (
+            <EvaluationCaseForm
+              key={caseEditor.item?.id ?? "create-case"}
+              readyDocuments={readyDocuments}
+              initialValue={caseEditor.item}
+              mode={caseEditor.mode}
+              submitting={createCase.isPending || updateCase.isPending}
+              submitError={caseEditor.mode === "edit" ? updateCase.error : createCase.error}
+              onCancel={() => setCaseEditor(null)}
+              onSubmit={async (payload) => {
+                if (caseEditor.mode === "edit" && caseEditor.item) await updateCase.mutateAsync({ caseId: caseEditor.item.id, payload });
+                else await createCase.mutateAsync(payload);
+              }}
+            />
+          )}
+        </section>
+      ) : null}
+
       <section className={styles.panel} aria-labelledby="case-list-title">
-        <div className={styles.sectionHeader}><div><h2 id="case-list-title">{t("evaluationCases:listTitle")}</h2><p>{t("evaluationCases:subtitle")}</p></div><Button type="button" variant="secondary" onClick={() => void cases.refetch()}>{t("evaluationCases:refresh")}</Button></div>
+        <div className={styles.sectionHeader}>
+          <div><h2 id="case-list-title">{t("evaluationCases:listTitle")}</h2><p>{t("evaluationCases:subtitle")}</p></div>
+          <div className={styles.headerActions}>
+            <Button type="button" variant="secondary" onClick={() => void cases.refetch()}>{t("evaluationCases:refresh")}</Button>
+            {canEdit ? <Button type="button" onClick={() => { createCase.reset(); updateCase.reset(); setCaseEditor({ mode: "create" }); window.setTimeout(() => editorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 0); }}>{t("evaluationCases:addCase")}</Button> : null}
+          </div>
+        </div>
+        <form className={`${styles.inlineForm} ${styles.caseFilters}`} onSubmit={(event) => { event.preventDefault(); setCaseQuery(caseQueryDraft.trim()); setCaseOffset(0); }}>
+          <div className={styles.formField}><label htmlFor="case-query">{t("evaluationCases:filterQuery")}</label><input id="case-query" value={caseQueryDraft} onChange={(event) => setCaseQueryDraft(event.target.value)} placeholder={t("evaluationCases:filterQueryPlaceholder")} /></div>
+          <div className={styles.formField}><label htmlFor="case-type-filter">{t("evaluationCases:filterType")}</label><select id="case-type-filter" value={caseTypeFilter} onChange={(event) => { setCaseTypeFilter(event.target.value); setCaseOffset(0); }}><option value="">{t("evaluationCases:filterAll")}</option><option value="answerable">{t("evaluationCases:answerable")}</option><option value="refusal">{t("evaluationCases:refusal")}</option></select></div>
+          <Button type="submit" variant="secondary">{t("common:search")}</Button>
+        </form>
         {cases.isLoading ? <p className={styles.loading} aria-busy="true">{t("evaluationCases:loading")}</p> : null}
         {cases.isError ? <OperationError error={cases.error} onRetry={() => void cases.refetch()} /> : null}
-        {cases.data?.length === 0 ? <EmptyState title={t("evaluationCases:emptyTitle")} description={t("evaluationCases:emptyDetail")} headingLevel={2} /> : null}
-        {cases.data?.length ? <div className={styles.caseList}>{cases.data.map((item, index) => <details className={styles.caseItem} key={item.id}><summary><span>{t("evaluationRuns:caseNumber", { number: index + 1 })}: {item.question}</span><code>{item.id}</code></summary><div className={styles.caseBody}><h4>{t("evaluationCases:referenceAnswer")}</h4><p className={styles.prose}>{item.reference_answer}</p><dl className={styles.factGrid}><div><dt>{t("evaluationCases:caseType")}</dt><dd>{item.should_refuse ? t("evaluationCases:refusal") : t("evaluationCases:answerable")}</dd></div><div><dt>{t("evaluationCases:expectedDocumentIds")}</dt><dd><code>{item.expected_document_ids.join(", ") || "—"}</code></dd></div><div><dt>{t("evaluationCases:acceptableCitationDocumentIds")}</dt><dd><code>{item.acceptable_citation_document_ids.join(", ") || "—"}</code></dd></div><div><dt>{t("evaluationCases:requiredKeyPoints")}</dt><dd>{item.required_key_points.join(" · ") || "—"}</dd></div><div><dt>{t("evaluationCases:requiredKeyPointGroups")}</dt><dd>{item.required_key_point_groups.map((group) => group.join(" | ")).join("; ") || "—"}</dd></div><div><dt>{t("evaluationCases:tags")}</dt><dd>{item.tags.join(" · ") || "—"}</dd></div></dl></div></details>)}</div> : null}
+        {deleteCase.isError ? <OperationError error={deleteCase.error} onRetry={() => confirmDeleteCaseId && deleteCase.mutate(confirmDeleteCaseId)} /> : null}
+        {cases.data?.items.length === 0 ? <EmptyState title={t("evaluationCases:emptyTitle")} description={caseQuery || caseTypeFilter ? t("evaluationCases:filteredEmptyDetail") : t("evaluationCases:emptyDetail")} headingLevel={2} /> : null}
+        {cases.data?.items.length ? <EvaluationCaseTable items={cases.data.items} offset={caseOffset} canEdit={canEdit} confirmingCaseId={confirmDeleteCaseId} deletingCaseId={deleteCase.isPending ? deleteCase.variables ?? null : null} onEdit={(item) => { createCase.reset(); updateCase.reset(); setCaseEditor({ mode: "edit", item }); window.setTimeout(() => editorRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 0); }} onRequestDelete={(caseId) => { deleteCase.reset(); setConfirmDeleteCaseId(caseId); }} onCancelDelete={() => setConfirmDeleteCaseId(null)} onConfirmDelete={(caseId) => deleteCase.mutate(caseId)} /> : null}
+        {cases.data && cases.data.total > 0 ? <nav className={styles.pagination} aria-label={t("evaluationCases:pagination")}><Button type="button" variant="secondary" disabled={caseOffset === 0} onClick={() => setCaseOffset(Math.max(0, caseOffset - CASE_PAGE_SIZE))}>{t("evaluationRuns:previous")}</Button><span>{t("evaluationCases:pageSummary", { page: Math.floor(caseOffset / CASE_PAGE_SIZE) + 1, pages: Math.max(1, Math.ceil(cases.data.total / CASE_PAGE_SIZE)), total: cases.data.total })}</span><Button type="button" variant="secondary" disabled={caseOffset + CASE_PAGE_SIZE >= cases.data.total} onClick={() => setCaseOffset(caseOffset + CASE_PAGE_SIZE)}>{t("evaluationRuns:next")}</Button></nav> : null}
       </section>
 
-      {canEdit ? <section className={styles.panel} aria-labelledby="add-case-title"><div className={styles.sectionHeader}><div><h2 id="add-case-title">{t("evaluationCases:createTitle")}</h2><p>{t("evaluationCases:createSubtitle")}</p></div></div>{documents.isError ? <OperationError error={documents.error} onRetry={() => void documents.refetch()} /> : <EvaluationCaseForm readyDocuments={readyDocuments} submitting={createCase.isPending} submitError={createCase.error} onSubmit={async (payload) => { await createCase.mutateAsync(payload); }} />}</section> : null}
-
-      <section className={styles.panel} aria-labelledby="start-run-title"><div className={styles.sectionHeader}><div><h2 id="start-run-title">{t("evaluationRuns:startTitle")}</h2><p>{t("evaluationRuns:startDetail")}</p></div>{canEdit ? <Button type="button" disabled={startRun.isPending || !cases.data?.length} onClick={() => startRun.mutate()}>{startRun.isPending ? t("evaluationRuns:starting") : t("evaluationRuns:start")}</Button> : null}</div>{!canEdit ? <p className={styles.notice}>{t("evaluationRuns:permissionStartRequiresEditor")}</p> : null}{cases.data?.length === 0 ? <p className={styles.validation}>{t("evaluationRuns:datasetHasNoCases")}</p> : null}{startRun.isError ? <OperationError error={startRun.error} onRetry={() => startRun.mutate()} /> : null}</section>
+      <section className={styles.panel} aria-labelledby="start-run-title"><div className={styles.sectionHeader}><div><h2 id="start-run-title">{t("evaluationRuns:startTitle")}</h2><p>{t("evaluationRuns:startDetail")}</p></div>{canEdit ? <Button type="button" disabled={startRun.isPending || datasetCaseTotal === 0} onClick={() => startRun.mutate()}>{startRun.isPending ? t("evaluationRuns:starting") : t("evaluationRuns:start")}</Button> : null}</div>{!canEdit ? <p className={styles.notice}>{t("evaluationRuns:permissionStartRequiresEditor")}</p> : null}{datasetCaseTotal === 0 ? <p className={styles.validation}>{t("evaluationRuns:datasetHasNoCases")}</p> : null}{startRun.isError ? <OperationError error={startRun.error} onRetry={() => startRun.mutate()} /> : null}</section>
 
       <section className={styles.panel} aria-labelledby="known-runs-title">
         <div className={styles.sectionHeader}><div><h2 id="known-runs-title">{t("evaluationRuns:runsTitle")}</h2><p>{t("evaluationRuns:serverScope")}</p></div><Button type="button" variant="secondary" onClick={() => void runs.refetch()}>{t("evaluationRuns:refresh")}</Button></div>

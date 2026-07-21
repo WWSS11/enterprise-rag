@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { DocumentRecord, EvaluationCaseCreate } from "@/api/types";
+import type { DocumentRecord, EvaluationCase, EvaluationCaseCreate } from "@/api/types";
 import { Button } from "@/components/Button";
 import { OperationError } from "@/components/OperationError";
 import styles from "@/pages/EvaluationConsole.module.css";
@@ -43,6 +43,9 @@ type EvaluationCaseFormProps = {
   submitting: boolean;
   submitError?: unknown;
   onSubmit: (payload: EvaluationCaseCreate) => Promise<void>;
+  initialValue?: EvaluationCase;
+  mode?: "create" | "edit";
+  onCancel?: () => void;
 };
 
 export function EvaluationCaseForm({
@@ -50,16 +53,31 @@ export function EvaluationCaseForm({
   submitting,
   submitError,
   onSubmit,
+  initialValue,
+  mode = "create",
+  onCancel,
 }: EvaluationCaseFormProps) {
   const { t } = useTranslation(["evaluationCases", "evaluationRuns", "common"]);
-  const [question, setQuestion] = useState("");
-  const [referenceAnswer, setReferenceAnswer] = useState("");
-  const [shouldRefuse, setShouldRefuse] = useState(false);
-  const [expectedDocumentIds, setExpectedDocumentIds] = useState<string[]>([]);
-  const [additionalCitationIds, setAdditionalCitationIds] = useState<string[]>([]);
-  const [requiredKeyPointsText, setRequiredKeyPointsText] = useState("");
-  const [keyPointGroupsText, setKeyPointGroupsText] = useState("");
-  const [tagsText, setTagsText] = useState("");
+  const [question, setQuestion] = useState(initialValue?.question ?? "");
+  const [referenceAnswer, setReferenceAnswer] = useState(
+    initialValue?.reference_answer ?? "",
+  );
+  const [shouldRefuse, setShouldRefuse] = useState(initialValue?.should_refuse ?? false);
+  const [expectedDocumentIds, setExpectedDocumentIds] = useState<string[]>(
+    initialValue?.expected_document_ids ?? [],
+  );
+  const [additionalCitationIds, setAdditionalCitationIds] = useState<string[]>(
+    initialValue?.acceptable_citation_document_ids.filter(
+      (id) => !initialValue.expected_document_ids.includes(id),
+    ) ?? [],
+  );
+  const [requiredKeyPointsText, setRequiredKeyPointsText] = useState(
+    initialValue?.required_key_points.join("\n") ?? "",
+  );
+  const [keyPointGroupsText, setKeyPointGroupsText] = useState(
+    initialValue?.required_key_point_groups.map((group) => group.join(" | ")).join("\n") ?? "",
+  );
+  const [tagsText, setTagsText] = useState(initialValue?.tags.join("\n") ?? "");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const submissionPendingRef = useRef(false);
   const changedDuringSubmissionRef = useRef<Set<string>>(new Set());
@@ -154,6 +172,7 @@ export function EvaluationCaseForm({
       return;
     }
     submissionPendingRef.current = false;
+    if (mode === "edit") return;
     const changedFields = new Set(changedDuringSubmissionRef.current);
     changedDuringSubmissionRef.current.clear();
     resetUnchangedFields(changedFields);
@@ -352,9 +371,18 @@ export function EvaluationCaseForm({
       <div className={styles.formActions}>
         <Button type="submit" disabled={submitting}>
           {submitting
-            ? t("evaluationCases:creating")
-            : t("evaluationCases:createSubmit")}
+            ? mode === "edit"
+              ? t("evaluationCases:saving")
+              : t("evaluationCases:creating")
+            : mode === "edit"
+              ? t("evaluationCases:saveChanges")
+              : t("evaluationCases:createSubmit")}
         </Button>
+        {onCancel ? (
+          <Button type="button" variant="secondary" disabled={submitting} onClick={onCancel}>
+            {t("common:cancel")}
+          </Button>
+        ) : null}
       </div>
     </form>
   );

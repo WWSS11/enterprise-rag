@@ -485,7 +485,24 @@ test.describe("Evaluation Console mocked API", () => {
       await page.route(`**/api/v1/evaluations/datasets/${datasetId}`, (route) =>
         fulfillJson(route, evaluationDataset()),
       );
-      await page.route(`**/api/v1/evaluations/datasets/${datasetId}/cases`, async (route) => {
+      await page.route(`**/api/v1/evaluations/datasets/${datasetId}/cases**`, async (route) => {
+        const url = new URL(route.request().url());
+        const casePrefix = `/api/v1/evaluations/datasets/${datasetId}/cases/`;
+        if (url.pathname.startsWith(casePrefix)) {
+          const requestedCaseId = url.pathname.slice(casePrefix.length);
+          const index = cases.findIndex((item) => item.id === requestedCaseId);
+          expect(index).toBeGreaterThanOrEqual(0);
+          if (route.request().method() === "PUT") {
+            const updated = { ...cases[index], ...route.request().postDataJSON() };
+            cases[index] = updated;
+            await fulfillJson(route, updated);
+            return;
+          }
+          expect(route.request().method()).toBe("DELETE");
+          cases.splice(index, 1);
+          await route.fulfill({ status: 204, body: "" });
+          return;
+        }
         if (route.request().method() === "POST") {
           expect(route.request().headers().authorization).toBe("Bearer mock-access-token-for-e2e");
           const body = route.request().postDataJSON();
@@ -527,7 +544,7 @@ test.describe("Evaluation Console mocked API", () => {
           markFirstCaseRefreshStarted();
           await firstCaseRefreshBlocked;
         }
-        await fulfillJson(route, cases);
+        await fulfillJson(route, { items: [...cases].reverse(), total: cases.length, limit: 10, offset: 0 });
       });
       await page.route("**/api/v1/documents**", (route) =>
         fulfillJson(route, [readyDocument()]),
@@ -604,8 +621,9 @@ test.describe("Evaluation Console mocked API", () => {
       await expectNoHorizontalOverflow(page, "dataset detail");
       await page.setViewportSize({ width: 1280, height: 1000 });
 
-      await page.getByLabel("Question").fill(answerableQuestion);
-      await page.getByLabel("Reference answer").fill(answerableReference);
+      await page.getByRole("button", { name: "Add case" }).click();
+      await page.getByLabel("Question", { exact: true }).fill(answerableQuestion);
+      await page.getByLabel("Reference answer", { exact: true }).fill(answerableReference);
       const expectedDocuments = page.getByRole("group", { name: "Expected retrieval documents" });
       const acceptableDocuments = page.getByRole("group", { name: "Acceptable citation documents" });
       await expectedDocuments.getByRole("checkbox", { name: /Retention policy\.pdf/ }).check();
@@ -622,18 +640,34 @@ test.describe("Evaluation Console mocked API", () => {
       await page.getByRole("button", { name: "Save case" }).click();
       expect((await firstCaseCreated).status()).toBe(201);
       await firstCaseRefreshStarted;
-
-      await page.getByLabel("Question").fill(refusalQuestion);
-      await page.getByLabel("Reference answer").fill(refusalReference);
-      await page.getByRole("radio", { name: /Should refuse/ }).check();
-      await expect(page.getByRole("group", { name: "Expected retrieval documents" })).toHaveCount(0);
       releaseFirstCaseRefresh();
       await expect(page.getByText(answerableQuestion)).toBeVisible();
-      await expect(page.getByLabel("Question")).toHaveValue(refusalQuestion);
-      await expect(page.getByLabel("Reference answer")).toHaveValue(refusalReference);
+      await page.getByRole("button", { name: "Add case" }).click();
+      await page.getByLabel("Question", { exact: true }).fill(refusalQuestion);
+      await page.getByLabel("Reference answer", { exact: true }).fill(refusalReference);
+      await page.getByRole("radio", { name: /Should refuse/ }).check();
+      await expect(page.getByRole("group", { name: "Expected retrieval documents" })).toHaveCount(0);
+      await expect(page.getByLabel("Question", { exact: true })).toHaveValue(refusalQuestion);
+      await expect(page.getByLabel("Reference answer", { exact: true })).toHaveValue(refusalReference);
       await expect(page.getByRole("radio", { name: /Should refuse/ })).toBeChecked();
       await page.getByRole("button", { name: "Save case" }).click();
       await expect(page.getByText(refusalQuestion)).toBeVisible();
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expectNoHorizontalOverflow(page, "evaluation case table");
+      await expect(page.getByRole("button", { name: answerableQuestion })).toBeVisible();
+      await page.setViewportSize({ width: 1280, height: 1000 });
+
+      const answerableRow = page.getByRole("row").filter({ hasText: answerableQuestion });
+      await answerableRow.getByRole("button", { name: "Edit" }).click();
+      await page.getByLabel("Reference answer", { exact: true }).fill(`${answerableReference} Confirmed.`);
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await expect(page.getByRole("row").filter({ hasText: answerableQuestion })).toBeVisible();
+
+      const refusalRow = page.getByRole("row").filter({ hasText: refusalQuestion });
+      await refusalRow.getByRole("button", { name: "Delete" }).click();
+      await refusalRow.getByRole("button", { name: "Delete case" }).click();
+      await expect(page.getByRole("row").filter({ hasText: refusalQuestion })).toHaveCount(0);
 
       const startResponse = page.waitForResponse((response) =>
         response.url().endsWith("/api/v1/evaluations/runs") &&

@@ -175,6 +175,9 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/auth/me `
 | `GET/POST` | `/api/v1/evaluations/datasets` | 查询或创建评测数据集 |
 | `POST` | `/api/v1/evaluations/datasets/{id}/cases` | 添加单条标准评测用例 |
 | `POST` | `/api/v1/evaluations/datasets/{id}/cases/bulk` | 批量添加标准评测用例 |
+| `GET` | `/api/v1/evaluations/datasets/{id}/cases` | 分页筛选评测用例 |
+| `PUT` | `/api/v1/evaluations/datasets/{id}/cases/{case_id}` | 更新尚未产生历史结果的用例 |
+| `DELETE` | `/api/v1/evaluations/datasets/{id}/cases/{case_id}` | 删除尚未产生历史结果的用例 |
 | `POST` | `/api/v1/evaluations/runs` | 创建 Celery 异步评测运行 |
 | `GET` | `/api/v1/evaluations/runs/{id}` | 查询评测进度和汇总指标 |
 | `GET` | `/api/v1/evaluations/runs/{id}/report` | 查询逐用例评测报告 |

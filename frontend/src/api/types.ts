@@ -224,6 +224,14 @@ export const evaluationCaseSchema = z.object({
 });
 export const evaluationCaseListSchema = z.array(evaluationCaseSchema);
 export type EvaluationCase = z.infer<typeof evaluationCaseSchema>;
+export type EvaluationCaseUpdate = EvaluationCaseCreate;
+export const evaluationCasePageSchema = z.object({
+  items: evaluationCaseListSchema,
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive().max(100),
+  offset: z.number().int().nonnegative(),
+});
+export type EvaluationCasePage = z.infer<typeof evaluationCasePageSchema>;
 
 export const evaluationRunCreateSchema = z.object({
   dataset_id: z.string().uuid(),

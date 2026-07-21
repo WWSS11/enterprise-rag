@@ -518,7 +518,9 @@ describe("EvaluationCaseForm", () => {
     });
     vi.spyOn(api, "getEvaluationDataset").mockResolvedValue(dataset);
     vi.spyOn(api, "listKnowledgeBases").mockResolvedValue([knowledgeBase]);
-    vi.spyOn(api, "listEvaluationCases").mockResolvedValue([]);
+    vi.spyOn(api, "listEvaluationCases").mockResolvedValue({
+      items: [], total: 0, limit: 10, offset: 0,
+    });
     vi.spyOn(api, "listDocuments").mockResolvedValue([
       readyPolicy,
       processingDocument,
@@ -545,6 +547,7 @@ describe("EvaluationCaseForm", () => {
       </QueryClientProvider>,
     );
 
+    await user.click(await screen.findByRole("button", { name: "添加用例" }));
     expect(await screen.findAllByText(readyPolicy.name)).toHaveLength(2);
     const expectedGroup = screen.getByRole("group", { name: "预期检索文档" });
     expect(within(expectedGroup).getByText(readyHandbook.name)).toBeVisible();
