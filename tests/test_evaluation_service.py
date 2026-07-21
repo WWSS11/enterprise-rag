@@ -1,11 +1,15 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app.api.v1.evaluations import _mutable_case
+from app.db.models import EvaluationCase, EvaluationDataset
 from app.main import app
-from app.schemas.evaluation import EvaluationCaseCreate
+from app.schemas.evaluation import EvaluationCaseCreate, EvaluationCasePage
 from app.services.evaluation_service import (
     build_citation_evidence,
     calculate_case_metrics,
@@ -405,6 +409,55 @@ def test_evaluation_routes_are_exposed() -> None:
     paths = app.openapi()["paths"]
     assert "/api/v1/evaluations/datasets" in paths
     assert "/api/v1/evaluations/datasets/{dataset_id}/cases/bulk" in paths
+    case_path = "/api/v1/evaluations/datasets/{dataset_id}/cases/{case_id}"
+    assert case_path in paths
+    assert "put" in paths[case_path]
+    assert "delete" in paths[case_path]
     assert "/api/v1/evaluations/runs" in paths
     assert "/api/v1/evaluations/runs/{run_id}/report" in paths
     assert "/api/v1/evaluations/runs/{run_id}/recalculate" in paths
+
+
+def test_evaluation_case_page_has_bounded_limit() -> None:
+    with pytest.raises(ValidationError):
+        EvaluationCasePage(items=[], total=0, limit=101, offset=0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("counts", "message"),
+    [
+        ([1], "queued or running"),
+        ([0, 1], "historical reports"),
+    ],
+)
+async def test_evaluation_case_mutation_preserves_active_and_historical_runs(
+    counts: list[int], message: str
+) -> None:
+    dataset = EvaluationDataset(
+        id=uuid4(),
+        tenant_id="tenant-a",
+        knowledge_base_id=uuid4(),
+        name="Release gate",
+        status="active",
+        created_by="editor-a",
+    )
+    case = EvaluationCase(
+        id=uuid4(),
+        dataset_id=dataset.id,
+        question="Question",
+        reference_answer="Answer",
+        expected_document_ids=[],
+        acceptable_citation_document_ids=[],
+        required_key_points=[],
+        required_key_point_groups=[],
+        should_refuse=True,
+        tags=[],
+    )
+    db = AsyncMock()
+    db.get.return_value = case
+    db.scalar.side_effect = counts
+
+    with pytest.raises(HTTPException, match=message) as exc_info:
+        await _mutable_case(db, dataset, case.id)
+    assert exc_info.value.status_code == 409

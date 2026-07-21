@@ -1,7 +1,7 @@
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,9 @@ from app.db.session import get_db
 from app.schemas.evaluation import (
     EvaluationCaseBulkCreate,
     EvaluationCaseCreate,
+    EvaluationCasePage,
     EvaluationCaseRead,
+    EvaluationCaseUpdate,
     EvaluationDatasetCreate,
     EvaluationDatasetRead,
     EvaluationQualityGateReport,
@@ -121,6 +123,59 @@ def _case_from_payload(dataset_id: UUID, payload: EvaluationCaseCreate) -> Evalu
         should_refuse=payload.should_refuse,
         tags=payload.tags,
     )
+
+
+def _apply_case_payload(case: EvaluationCase, payload: EvaluationCaseCreate) -> None:
+    case.question = payload.question
+    case.reference_answer = payload.reference_answer
+    case.expected_document_ids = [str(item) for item in payload.expected_document_ids]
+    case.acceptable_citation_document_ids = [
+        str(item) for item in payload.acceptable_citation_document_ids
+    ]
+    case.required_key_points = payload.required_key_points
+    case.required_key_point_groups = payload.required_key_point_groups
+    case.should_refuse = payload.should_refuse
+    case.tags = payload.tags
+
+
+async def _mutable_case(
+    db: AsyncSession,
+    dataset: EvaluationDataset,
+    case_id: UUID,
+) -> EvaluationCase:
+    case = await db.get(EvaluationCase, case_id)
+    if case is None or case.dataset_id != dataset.id:
+        raise HTTPException(status_code=404, detail="evaluation case not found")
+    active_runs = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(EvaluationRun)
+            .where(
+                EvaluationRun.dataset_id == dataset.id,
+                EvaluationRun.status.in_(["queued", "running"]),
+            )
+        )
+        or 0
+    )
+    if active_runs:
+        raise HTTPException(
+            status_code=409,
+            detail="evaluation cases cannot change while a run is queued or running",
+        )
+    result_count = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(EvaluationResult)
+            .where(EvaluationResult.case_id == case.id)
+        )
+        or 0
+    )
+    if result_count:
+        raise HTTPException(
+            status_code=409,
+            detail="evaluated cases are immutable to preserve historical reports",
+        )
+    return case
 
 
 @router.post(
@@ -271,22 +326,102 @@ async def create_cases_bulk(
     return cases
 
 
-@router.get("/datasets/{dataset_id}/cases", response_model=list[EvaluationCaseRead])
+@router.get("/datasets/{dataset_id}/cases", response_model=EvaluationCasePage)
 async def list_cases(
     dataset_id: UUID,
+    query: str | None = Query(default=None, alias="q", max_length=200),
+    should_refuse: bool | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
-) -> list[EvaluationCase]:
+) -> EvaluationCasePage:
     await _authorize_dataset(db, dataset_id, identity)
-    return list(
+    conditions = [EvaluationCase.dataset_id == dataset_id]
+    if query:
+        search = f"%{query.strip()}%"
+        conditions.append(
+            or_(
+                EvaluationCase.question.ilike(search),
+                EvaluationCase.reference_answer.ilike(search),
+            )
+        )
+    if should_refuse is not None:
+        conditions.append(EvaluationCase.should_refuse == should_refuse)
+    total = int(
+        await db.scalar(
+            select(func.count()).select_from(EvaluationCase).where(*conditions)
+        )
+        or 0
+    )
+    items = list(
         (
             await db.execute(
                 select(EvaluationCase)
-                .where(EvaluationCase.dataset_id == dataset_id)
-                .order_by(EvaluationCase.created_at, EvaluationCase.id)
+                .where(*conditions)
+                .order_by(EvaluationCase.created_at.desc(), EvaluationCase.id.desc())
+                .limit(limit)
+                .offset(offset)
             )
         ).scalars()
     )
+    return EvaluationCasePage(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.put(
+    "/datasets/{dataset_id}/cases/{case_id}",
+    response_model=EvaluationCaseRead,
+)
+async def update_case(
+    dataset_id: UUID,
+    case_id: UUID,
+    payload: EvaluationCaseUpdate,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationCase:
+    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
+    case = await _mutable_case(db, dataset, case_id)
+    await _validate_expected_documents(db, dataset, [payload])
+    _apply_case_payload(case, payload)
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.case_updated",
+        resource_type="evaluation_case",
+        resource_id=str(case.id),
+        details={"dataset_id": str(dataset.id), "should_refuse": case.should_refuse},
+    )
+    await db.commit()
+    await db.refresh(case)
+    return case
+
+
+@router.delete(
+    "/datasets/{dataset_id}/cases/{case_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_case(
+    dataset_id: UUID,
+    case_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
+    case = await _mutable_case(db, dataset, case_id)
+    details = {"dataset_id": str(dataset.id), "should_refuse": case.should_refuse}
+    await db.delete(case)
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.case_deleted",
+        resource_type="evaluation_case",
+        resource_id=str(case.id),
+        details=details,
+    )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/runs", response_model=EvaluationRunRead, status_code=status.HTTP_202_ACCEPTED)

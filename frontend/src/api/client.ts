@@ -29,6 +29,7 @@ import {
   evaluationCaseBulkCreateSchema,
   evaluationCaseCreateSchema,
   evaluationCaseListSchema,
+  evaluationCasePageSchema,
   evaluationCaseSchema,
   evaluationRunCreateSchema,
   evaluationRunSchema,
@@ -61,6 +62,8 @@ import {
   type EvaluationCase,
   type EvaluationCaseBulkCreate,
   type EvaluationCaseCreate,
+  type EvaluationCasePage,
+  type EvaluationCaseUpdate,
   type EvaluationRun,
   type EvaluationRunCreate,
   type EvaluationRunPage,
@@ -633,11 +636,54 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    listEvaluationCases(datasetId: string): Promise<EvaluationCase[]> {
-      return request(
+    listEvaluationCases(
+      datasetId: string,
+      filters: {
+        query?: string;
+        shouldRefuse?: boolean;
+        limit?: number;
+        offset?: number;
+      } = {},
+    ): Promise<EvaluationCasePage> {
+      const path = withQuery(
         `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/cases`,
+        {
+          q: filters.query,
+          should_refuse:
+            filters.shouldRefuse === undefined ? undefined : String(filters.shouldRefuse),
+          limit: filters.limit,
+          offset: filters.offset,
+        },
+      );
+      return request(
+        path,
         { method: "GET" },
-        (data) => evaluationCaseListSchema.parse(data),
+        (data) => evaluationCasePageSchema.parse(data),
+      );
+    },
+
+    updateEvaluationCase(
+      datasetId: string,
+      caseId: string,
+      payload: EvaluationCaseUpdate,
+    ): Promise<EvaluationCase> {
+      const body = evaluationCaseCreateSchema.parse(payload);
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(caseId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationCaseSchema.parse(data),
+      );
+    },
+
+    deleteEvaluationCase(datasetId: string, caseId: string): Promise<void> {
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(caseId)}`,
+        { method: "DELETE" },
+        () => undefined,
       );
     },
 

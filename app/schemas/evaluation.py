@@ -88,6 +88,10 @@ class EvaluationCaseBulkCreate(BaseModel):
     cases: list[EvaluationCaseCreate] = Field(min_length=1, max_length=500)
 
 
+class EvaluationCaseUpdate(EvaluationCaseCreate):
+    pass
+
+
 class EvaluationCaseRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -103,6 +107,13 @@ class EvaluationCaseRead(BaseModel):
     tags: list[str]
     created_at: datetime
     updated_at: datetime
+
+
+class EvaluationCasePage(BaseModel):
+    items: list[EvaluationCaseRead]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
 
 
 class EvaluationRunCreate(BaseModel):
