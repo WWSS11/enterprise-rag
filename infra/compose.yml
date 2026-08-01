@@ -1,12 +1,12 @@
-name: rag-study-helper-enterprise
+name: rag-enterprise
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE}
+    image: postgres:18.4-bookworm
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-rag_study_helper}
+      POSTGRES_DB: ${POSTGRES_DB:-rag-enterprise}
       POSTGRES_USER: ${POSTGRES_USER:-rag}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -14,14 +14,14 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "psql -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-rag_study_helper} -tAc 'SELECT 1' >/dev/null"
+        - "psql -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-rag-enterprise} -tAc 'SELECT 1' >/dev/null"
       interval: 10s
       timeout: 5s
       retries: 10
     restart: unless-stopped
 
   redis:
-    image: ${REDIS_IMAGE}
+    image: redis:8.8.0
     command:
       - redis-server
       - --appendonly
@@ -29,22 +29,22 @@ services:
       - --maxmemory-policy
       - noeviction
       - --requirepass
-      - ${REDIS_PASSWORD:-redis_change_me}
+      - ${REDIS_PASSWORD:-123456}
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_change_me}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-123456}
     ports:
       - "127.0.0.1:16379:6379"
     volumes:
       - ./volumes/redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_change_me}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-123456}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
     restart: unless-stopped
 
   etcd:
-    image: ${ETCD_IMAGE}
+    image: quay.io/coreos/etcd:v3.5.25
     environment:
       ETCD_AUTO_COMPACTION_MODE: revision
       ETCD_AUTO_COMPACTION_RETENTION: "1000"
@@ -64,10 +64,10 @@ services:
     restart: unless-stopped
 
   minio:
-    image: ${MINIO_IMAGE}
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
     ports:
       - "127.0.0.1:9000:9000"
@@ -82,7 +82,7 @@ services:
     restart: unless-stopped
 
   milvus:
-    image: ${MILVUS_IMAGE}
+    image: milvusdb/milvus:v2.6.19
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
@@ -90,7 +90,7 @@ services:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
       MQ_TYPE: woodpecker
     ports:
       - "127.0.0.1:19530:19530"
@@ -111,11 +111,11 @@ services:
     restart: unless-stopped
 
   keycloak:
-    image: ${KEYCLOAK_IMAGE}
+    image: quay.io/keycloak/keycloak:26.7.0
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME:-admin}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:-keycloak_admin_change_me}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD:-123456}
       KC_HEALTH_ENABLED: "true"
       KC_HOSTNAME: http://127.0.0.1:18080
     ports:
@@ -134,130 +134,4 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
-    restart: unless-stopped
-
-  migrate:
-    build:
-      context: ..
-    command: ["alembic", "upgrade", "head"]
-    environment: &app-env
-      APP_ENV: docker
-      APP_POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag_change_me}@postgres:5432/${POSTGRES_DB:-rag_study_helper}
-      APP_POSTGRES_SYNC_DSN: postgresql+psycopg://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag_change_me}@postgres:5432/${POSTGRES_DB:-rag_study_helper}
-      APP_REDIS_URL: redis://:${REDIS_PASSWORD:-redis_change_me}@redis:6379/0
-      APP_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redis_change_me}@redis:6379/1
-      APP_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redis_change_me}@redis:6379/2
-      APP_MILVUS_URI: http://milvus:19530
-      APP_MILVUS_COLLECTION: rag_chunks_v3
-      APP_MILVUS_COLLECTION_ALIAS: rag_chunks_current
-      APP_CHAT_API_KEY: ${APP_CHAT_API_KEY:-}
-      APP_CHAT_BASE_URL: ${APP_CHAT_BASE_URL:-https://api.deepseek.com/v1}
-      APP_CHAT_MODEL: ${APP_CHAT_MODEL:-deepseek-chat}
-      APP_EMBEDDING_API_KEY: ${APP_EMBEDDING_API_KEY:-}
-      APP_EMBEDDING_BASE_URL: ${APP_EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
-      APP_EMBEDDING_MODEL: ${APP_EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
-      APP_RERANK_API_KEY: ${APP_RERANK_API_KEY:-}
-      APP_RERANK_BASE_URL: ${APP_RERANK_BASE_URL:-https://api.siliconflow.cn/v1}
-      APP_RERANK_MODEL: ${APP_RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
-      APP_RERANK_TIMEOUT_SECONDS: ${APP_RERANK_TIMEOUT_SECONDS:-30}
-      APP_RERANK_MAX_ATTEMPTS: ${APP_RERANK_MAX_ATTEMPTS:-2}
-      APP_RERANK_RETRY_BASE_SECONDS: ${APP_RERANK_RETRY_BASE_SECONDS:-0.5}
-      APP_IDENTITY_HEADER_SECRET: ${APP_IDENTITY_HEADER_SECRET:-}
-      APP_ADMIN_USER_IDS: ${APP_ADMIN_USER_IDS:-["admin"]}
-      APP_AUTH_MODE: ${APP_AUTH_MODE:-trusted_header}
-      APP_OIDC_ISSUER: ${APP_OIDC_ISSUER:-}
-      APP_OIDC_AUDIENCE: ${APP_OIDC_AUDIENCE:-}
-      APP_OIDC_JWKS_URL: ${APP_OIDC_JWKS_URL:-http://keycloak:8080/realms/enterprise-rag/protocol/openid-connect/certs}
-      APP_OIDC_ALGORITHMS: ${APP_OIDC_ALGORITHMS:-["RS256"]}
-      APP_OIDC_TOKEN_TYPES: ${APP_OIDC_TOKEN_TYPES:-["JWT","at+jwt","application/at+jwt"]}
-      APP_OIDC_TENANT_CLAIM: ${APP_OIDC_TENANT_CLAIM:-tenant_id}
-      APP_OIDC_ROLES_CLAIM: ${APP_OIDC_ROLES_CLAIM:-realm_access.roles}
-      APP_OIDC_GROUPS_CLAIM: ${APP_OIDC_GROUPS_CLAIM:-groups}
-      APP_OIDC_ADMIN_ROLE: ${APP_OIDC_ADMIN_ROLE:-rag-admin}
-      APP_CHUNK_SIZE: ${APP_CHUNK_SIZE:-480}
-      APP_CHUNK_OVERLAP: ${APP_CHUNK_OVERLAP:-80}
-      APP_RETRIEVAL_TOP_K: ${APP_RETRIEVAL_TOP_K:-40}
-      APP_RERANK_TOP_K: ${APP_RERANK_TOP_K:-8}
-      APP_SCORE_THRESHOLD: ${APP_SCORE_THRESHOLD:-0.0}
-      APP_HYBRID_RRF_K: ${APP_HYBRID_RRF_K:-60}
-      APP_ATOMIC_CHUNK_MAX_TOKENS: ${APP_ATOMIC_CHUNK_MAX_TOKENS:-160}
-      APP_RETRIEVAL_CHUNK_TARGET_TOKENS: ${APP_RETRIEVAL_CHUNK_TARGET_TOKENS:-320}
-      APP_RETRIEVAL_CHUNK_OVERLAP_TOKENS: ${APP_RETRIEVAL_CHUNK_OVERLAP_TOKENS:-48}
-      APP_PARENT_CHUNK_MAX_TOKENS: ${APP_PARENT_CHUNK_MAX_TOKENS:-960}
-      APP_EMBEDDING_CONTEXT_MAX_TOKENS: ${APP_EMBEDDING_CONTEXT_MAX_TOKENS:-400}
-      APP_SEMANTIC_CHUNKING_ENABLED: ${APP_SEMANTIC_CHUNKING_ENABLED:-true}
-      APP_SEMANTIC_BREAK_THRESHOLD: ${APP_SEMANTIC_BREAK_THRESHOLD:-0.58}
-      APP_SEMANTIC_BREAK_PERCENTILE: ${APP_SEMANTIC_BREAK_PERCENTILE:-15}
-      APP_CONTEXT_MAX_TOKENS: ${APP_CONTEXT_MAX_TOKENS:-4000}
-      APP_CONTEXT_MAX_PARENTS: ${APP_CONTEXT_MAX_PARENTS:-5}
-      APP_CONTEXT_NEIGHBOR_WINDOW: ${APP_CONTEXT_NEIGHBOR_WINDOW:-1}
-      APP_CONTEXT_DOCUMENT_DIVERSITY_ENABLED: ${APP_CONTEXT_DOCUMENT_DIVERSITY_ENABLED:-true}
-      APP_CONTEXT_DOCUMENT_DIVERSITY_MIN_SCORE_RATIO: ${APP_CONTEXT_DOCUMENT_DIVERSITY_MIN_SCORE_RATIO:-0.1}
-      APP_SCAN_ROOTS: '{"default":"data/import"}'
-      APP_FEISHU_ENABLED: ${APP_FEISHU_ENABLED:-false}
-      APP_FEISHU_APP_ID: ${APP_FEISHU_APP_ID:-}
-      APP_FEISHU_APP_SECRET: ${APP_FEISHU_APP_SECRET:-}
-      APP_FEISHU_SPACE_ID: ${APP_FEISHU_SPACE_ID:-}
-      APP_FEISHU_TENANT_ID: ${APP_FEISHU_TENANT_ID:-default}
-      APP_FEISHU_RUN_AS_USER: ${APP_FEISHU_RUN_AS_USER:-feishu-sync}
-      APP_FEISHU_KNOWLEDGE_BASE_ID: ${APP_FEISHU_KNOWLEDGE_BASE_ID:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
-  api:
-    build:
-      context: ..
-    environment: *app-env
-    ports:
-      - "127.0.0.1:8000:8000"
-    volumes:
-      - ../data:/app/data
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      milvus:
-        condition: service_healthy
-      keycloak:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=5)"
-      interval: 15s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
-  worker:
-    build:
-      context: ..
-    command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
-    environment: *app-env
-    volumes:
-      - ../data:/app/data
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      milvus:
-        condition: service_healthy
-    restart: unless-stopped
-
-  beat:
-    build:
-      context: ..
-    command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO"]
-    environment: *app-env
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
     restart: unless-stopped
