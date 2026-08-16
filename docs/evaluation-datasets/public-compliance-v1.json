@@ -19,16 +19,16 @@
     "approval_reference": "user-instruction-2026-08-03-public-compliance"
   },
   "documents": [
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/01-data-security-law.md", "upload_name": "01-data-security-law.md", "sha256": "f50a5eb34caf212e8cad792c6596d86a8658b592f9309c0a3fe8248cd03b4b05"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/02-personal-information-protection-law.md", "upload_name": "02-personal-information-protection-law.md", "sha256": "280c14d2ea9f22dcfacc90128c7d6f3f998b2932c8068023fc2650816fb92d85"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/03-labor-contract-law.md", "upload_name": "03-labor-contract-law.md", "sha256": "fefa3f303c574f7e6159573ede404a2cebc404968d6dd9a3f74245eb02dcf108"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/04-social-insurance-law.md", "upload_name": "04-social-insurance-law.md", "sha256": "5deead69e6ea5b71649877b7101f06291b5bf010d99dff7241cd8e65aa0b657a"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/05-work-safety-law.md", "upload_name": "05-work-safety-law.md", "sha256": "78df61bbdfd2cc2a1528eb248d2004b9180b0eeb2c583ebfedfdce4016b17bfe"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/06-employment-promotion-law.md", "upload_name": "06-employment-promotion-law.md", "sha256": "1ed8de18b49d53a8b95b215461c9a0072364d7ea41e4a5d404aaa65775f3b058"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/07-company-law.md", "upload_name": "07-company-law.md", "sha256": "09e5e64d3d65825a4ffba78f9c12ace065d152f13861f1cb79f2e8b869ef0ca3"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/08-consumer-rights-law.md", "upload_name": "08-consumer-rights-law.md", "sha256": "88109436a7765f3cdb1037ec48b2f50cce9d087a055dc658934b9306176eb609"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/09-civil-code-contracts.md", "upload_name": "09-civil-code-contracts.md", "sha256": "317d1591b0cd47bc0d75d52925a88acbeb484269649b1c7a0d7c0ec621a786ec"},
-    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/10-trade-union-law.md", "upload_name": "10-trade-union-law.md", "sha256": "6b0f2e55d750f638c3978de71652fceadba79e6bed515a1fe17667cd10ff0b50"}
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/01-data-security-law.md", "upload_name": "01-data-security-law.md", "sha256": "1a7d62fbc4fbf9f1348626bd7192357c138076bfe30bde2d14f31fb93611c72d"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/02-personal-information-protection-law.md", "upload_name": "02-personal-information-protection-law.md", "sha256": "eb6c851f3fdc49a6e43c5562ace1443d9674bf837f63bcbbe4fcafcb39cbe280"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/03-labor-contract-law.md", "upload_name": "03-labor-contract-law.md", "sha256": "a47b88db1276acdcf653c71a6879f0d9a8e67139c3ac4b3037f7b33aef88b95e"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/04-social-insurance-law.md", "upload_name": "04-social-insurance-law.md", "sha256": "989c9cfc4c41735b92b190b0cfd2f326665dc997325c4bed7d077e607751bfbc"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/05-work-safety-law.md", "upload_name": "05-work-safety-law.md", "sha256": "2bf113d36f3325fb22051b8d7ef29ba5fd55291759bf0878b3bedd718a7311c2"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/06-employment-promotion-law.md", "upload_name": "06-employment-promotion-law.md", "sha256": "504120e304297e68dff7f0f465a2368e5528e4743fdcf994822c0d78444a6aec"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/07-company-law.md", "upload_name": "07-company-law.md", "sha256": "a3e6bd61caa27731ea5e286410b880c7240863a05d0a546b46a2b97d9d43ec50"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/08-consumer-rights-law.md", "upload_name": "08-consumer-rights-law.md", "sha256": "8fb2c40f511d002f224d41cc4a5ba1cb04e5ea8bcd4d91b38f09a6fd28706b09"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/09-civil-code-contracts.md", "upload_name": "09-civil-code-contracts.md", "sha256": "8f056e246f306b768ce847562ac07d97c857f192f1426e3b6e65f238bee158d2"},
+    {"source_path": "docs/evaluation-datasets/public-compliance-v1/documents/10-trade-union-law.md", "upload_name": "10-trade-union-law.md", "sha256": "48d4a99a22dc539699f0e21e1a4c56a5ff82590cbda57f6982cc4862e7eace16"}
   ],
   "cases": [
     {
