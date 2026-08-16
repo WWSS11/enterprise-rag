@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "@/i18n";
@@ -13,8 +13,17 @@ import styles from "./EvaluationConsole.module.css";
 export function EvaluationsPage() {
   const { t, i18n } = useTranslation(["evaluations", "evaluationRuns"]);
   const { api, identity } = useAuth();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const locale = i18n.language as AppLocale;
-  const datasets = useQuery({ queryKey: ["evaluation-datasets"], queryFn: () => api.listEvaluationDatasets() });
+  const requestedStatus = searchParams.get("status");
+  const datasetStatus = requestedStatus === "archived" || requestedStatus === "all"
+    ? requestedStatus
+    : "active";
+  const datasets = useQuery({
+    queryKey: ["evaluation-datasets", datasetStatus],
+    queryFn: () => api.listEvaluationDatasets({ status: datasetStatus }),
+  });
   const knowledgeBases = useQuery({ queryKey: ["knowledge-bases"], queryFn: () => api.listKnowledgeBases() });
   const editable = knowledgeBases.data?.filter((item) => canEditKnowledgeBase(identity, item)) ?? [];
   const names = new Map(knowledgeBases.data?.map((item) => [item.id, item.name]) ?? []);
@@ -31,10 +40,30 @@ export function EvaluationsPage() {
         {editable.length > 0 ? <Link className={styles.primaryLink} to="/app/evaluations/new">{t("evaluations:create")}</Link> : null}
       </header>
 
+      {(location.state as { archived?: boolean } | null)?.archived ? (
+        <p className={styles.successNotice} role="status">{t("evaluations:archiveSuccess")}</p>
+      ) : null}
+
       <section className={styles.noticeSection} aria-labelledby="evaluation-history-scope-title">
         <h2 id="evaluation-history-scope-title">{t("evaluationRuns:runsTitle")}</h2>
         <p>{t("evaluationRuns:serverScope")}</p>
       </section>
+
+      <label className={styles.compactFilter} htmlFor="dataset-status-filter">
+        <span>{t("evaluations:filterStatus")}</span>
+        <select
+          id="dataset-status-filter"
+          value={datasetStatus}
+          onChange={(event) => {
+            const next = event.target.value;
+            setSearchParams(next === "active" ? {} : { status: next });
+          }}
+        >
+          <option value="active">{t("evaluations:filterActive")}</option>
+          <option value="archived">{t("evaluations:filterArchived")}</option>
+          <option value="all">{t("evaluations:filterAll")}</option>
+        </select>
+      </label>
 
       {datasets.isLoading ? <section className={styles.loading} aria-busy="true">{t("evaluations:loading")}</section> : null}
       {datasets.isError ? <OperationError error={datasets.error} onRetry={() => void datasets.refetch()} retryLabel={t("evaluations:retry")} /> : null}
@@ -45,14 +74,16 @@ export function EvaluationsPage() {
 
       {datasets.data?.length ? (
         <section className={styles.listPanel} aria-labelledby="dataset-list-title">
-          <div className={styles.sectionHeader}><div><h2 id="dataset-list-title">{t("evaluations:datasetsTitle")}</h2><p>{t("evaluations:datasetsDescription")}</p></div></div>
+          <div className={styles.sectionHeader}>
+            <div><h2 id="dataset-list-title">{t("evaluations:datasetsTitle")}</h2><p>{t("evaluations:datasetsDescription")}</p></div>
+          </div>
           <ul className={styles.datasetList}>
             {datasets.data.map((dataset) => (
               <li key={dataset.id} className={styles.datasetRow}>
                 <div className={styles.rowMain}><Link to={`/app/evaluations/datasets/${dataset.id}`}>{dataset.name}</Link><p>{dataset.description || "—"}</p><code>{dataset.id}</code></div>
                 <dl className={styles.rowFacts}>
                   <div><dt>{t("evaluations:knowledgeBase")}</dt><dd>{names.get(dataset.knowledge_base_id) || <code>{dataset.knowledge_base_id}</code>}</dd></div>
-                  <div><dt>{t("evaluations:status")}</dt><dd><StatusPill tone={dataset.status === "active" ? "ok" : "unknown"} label={dataset.status === "active" ? t("evaluations:statusActive") : t("evaluations:statusUnknown", { status: dataset.status })} /></dd></div>
+                  <div><dt>{t("evaluations:status")}</dt><dd><StatusPill tone={dataset.status === "active" ? "ok" : "unknown"} label={dataset.status === "active" ? t("evaluations:statusActive") : dataset.status === "archived" ? t("evaluations:statusArchived") : t("evaluations:statusUnknown", { status: dataset.status })} /></dd></div>
                   <div><dt>{t("evaluations:updatedAt")}</dt><dd>{formatDateTime(locale, dataset.updated_at)}</dd></div>
                 </dl>
                 <Link to={`/app/evaluations/datasets/${dataset.id}`}>{t("evaluations:openDataset")}</Link>

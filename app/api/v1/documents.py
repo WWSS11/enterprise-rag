@@ -1,19 +1,23 @@
 import asyncio
 import hashlib
+import mimetypes
 import re
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import request_identity
 from app.core.config import get_settings
-from app.db.models import Document, IngestionJob
+from app.db.models import Document, DocumentChunk, DocumentSection, IngestionJob
 from app.db.session import get_db
 from app.schemas.document import (
+    DocumentPreviewRead,
+    DocumentPreviewSectionRead,
     DocumentRead,
     DocumentUploadAccepted,
     JobRead,
@@ -23,7 +27,12 @@ from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
 from app.services.job_control_service import active_document_job
 from app.services.knowledge_base_service import knowledge_base_service
+from app.services.source_location_service import source_location
 from app.services.source_path_service import portable_source_uri, resolve_source_uri
+from app.services.upload_security_service import (
+    UploadValidationError,
+    validate_upload_content,
+)
 from app.workers.tasks import (
     delete_document_task,
     ingest_document_task,
@@ -32,6 +41,35 @@ from app.workers.tasks import (
 
 router = APIRouter()
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
+PREVIEW_SECTION_LIMIT = 20
+PREVIEW_CHARACTER_LIMIT = 50_000
+
+
+async def _authorized_document(
+    db: AsyncSession,
+    identity: RequestIdentity,
+    document_id: UUID,
+) -> Document:
+    document = await db.get(Document, document_id)
+    if document is None or document.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=404, detail="document not found")
+    try:
+        await knowledge_base_service.authorize_identity(
+            db,
+            identity,
+            document.knowledge_base_id,
+            required_permission="reader",
+        )
+    except (LookupError, PermissionError) as exc:
+        raise HTTPException(status_code=404, detail="document not found") from exc
+    return document
+
+
+async def _source_file(document: Document) -> Path | None:
+    if not document.source_uri:
+        return None
+    path = resolve_source_uri(document.source_uri)
+    return path if await asyncio.to_thread(path.is_file) else None
 
 
 @router.post("/scan", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
@@ -120,6 +158,15 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="empty file")
     if len(content) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"file exceeds {settings.max_upload_mb} MB")
+    try:
+        validate_upload_content(
+            filename=original_name,
+            declared_content_type=file.content_type,
+            content=content,
+            max_upload_bytes=settings.max_upload_mb * 1024 * 1024,
+        )
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     checksum = hashlib.sha256(content).hexdigest()
     existing = await db.scalar(
@@ -189,6 +236,9 @@ async def upload_document(
 @router.get("", response_model=list[DocumentRead])
 async def list_documents(
     knowledge_base_id: UUID | None = None,
+    query: str | None = Query(default=None, alias="q", max_length=200),
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[Document]:
@@ -206,12 +256,186 @@ async def list_documents(
         ]
     if not knowledge_base_ids:
         return []
+    statement = select(Document).where(Document.knowledge_base_id.in_(knowledge_base_ids))
+    if query:
+        statement = statement.where(Document.name.ilike(f"%{query}%"))
     result = await db.execute(
-        select(Document)
-        .where(Document.knowledge_base_id.in_(knowledge_base_ids))
-        .order_by(Document.created_at.desc())
+        statement.order_by(Document.created_at.desc()).limit(limit).offset(offset)
     )
     return list(result.scalars())
+
+
+@router.get("/{document_id}/preview", response_model=DocumentPreviewRead)
+async def preview_document(
+    document_id: UUID,
+    chunk_id: UUID | None = None,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentPreviewRead:
+    document = await _authorized_document(db, identity, document_id)
+    if document.index_version is None:
+        raise HTTPException(
+            status_code=409,
+            detail="document preview is unavailable until indexing completes",
+        )
+
+    target_chunk: DocumentChunk | None = None
+    target_section: DocumentSection | None = None
+    if chunk_id is not None:
+        target_chunk = await db.scalar(
+            select(DocumentChunk).where(
+                DocumentChunk.id == chunk_id,
+                DocumentChunk.document_id == document.id,
+                DocumentChunk.index_version == document.index_version,
+            )
+        )
+        if target_chunk is None:
+            raise HTTPException(status_code=404, detail="document chunk not found")
+        if target_chunk.parent_section_id is not None:
+            target_section = await db.get(DocumentSection, target_chunk.parent_section_id)
+
+    if target_section is not None:
+        section_result = await db.execute(
+            select(DocumentSection)
+            .where(
+                DocumentSection.document_id == document.id,
+                DocumentSection.index_version == document.index_version,
+                DocumentSection.section_index.between(
+                    max(0, target_section.section_index - 1),
+                    target_section.section_index + 1,
+                ),
+            )
+            .order_by(DocumentSection.section_index)
+        )
+    else:
+        section_result = await db.execute(
+            select(DocumentSection)
+            .where(
+                DocumentSection.document_id == document.id,
+                DocumentSection.index_version == document.index_version,
+            )
+            .order_by(DocumentSection.section_index)
+            .limit(PREVIEW_SECTION_LIMIT + 1)
+        )
+    section_models = list(section_result.scalars())
+    has_more_sections = len(section_models) > PREVIEW_SECTION_LIMIT
+    section_models = section_models[:PREVIEW_SECTION_LIMIT]
+
+    preview_sections: list[DocumentPreviewSectionRead] = []
+    used_characters = 0
+    content_truncated = False
+    for section in section_models:
+        remaining = PREVIEW_CHARACTER_LIMIT - used_characters
+        if remaining <= 0:
+            content_truncated = True
+            break
+        content = section.content
+        if len(content) > remaining:
+            content = content[:remaining].rstrip()
+            content_truncated = True
+        used_characters += len(content)
+        location = source_location(
+            section.source_metadata,
+            heading_path=section.heading_path,
+            section_index=section.section_index,
+        )
+        preview_sections.append(
+            DocumentPreviewSectionRead(
+                section_index=section.section_index,
+                title=section.title,
+                heading_path=section.heading_path,
+                content=content,
+                location=location,
+                is_target=(
+                    target_section is not None and section.id == target_section.id
+                ),
+            )
+        )
+
+    if not preview_sections and target_chunk is not None:
+        location = source_location(
+            target_chunk.source_metadata,
+            heading_path=target_chunk.heading_path,
+            section_index=target_chunk.chunk_index,
+        )
+        preview_sections.append(
+            DocumentPreviewSectionRead(
+                section_index=target_chunk.chunk_index,
+                title=None,
+                heading_path=target_chunk.heading_path,
+                content=target_chunk.content[:PREVIEW_CHARACTER_LIMIT],
+                location=location,
+                is_target=True,
+            )
+        )
+        content_truncated = len(target_chunk.content) > PREVIEW_CHARACTER_LIMIT
+    if not preview_sections:
+        raise HTTPException(status_code=409, detail="document has no indexed preview content")
+
+    target_location = None
+    if target_chunk is not None:
+        target_location = source_location(
+            target_chunk.source_metadata,
+            heading_path=target_chunk.heading_path,
+            section_index=(
+                target_section.section_index
+                if target_section is not None
+                else target_chunk.chunk_index
+            ),
+        )
+    source_file = await _source_file(document)
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="documents.previewed",
+        resource_type="document",
+        resource_id=str(document.id),
+        details={"chunk_id": str(chunk_id) if chunk_id else None},
+    )
+    await db.commit()
+    return DocumentPreviewRead(
+        document_id=document.id,
+        name=document.name,
+        content_type=document.content_type,
+        source_type=document.source_type,
+        target_chunk_id=target_chunk.id if target_chunk is not None else None,
+        target_location=target_location,
+        sections=preview_sections,
+        truncated=has_more_sections or content_truncated,
+        download_available=source_file is not None,
+    )
+
+
+@router.get("/{document_id}/download", response_class=FileResponse)
+async def download_document(
+    document_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    document = await _authorized_document(db, identity, document_id)
+    source_file = await _source_file(document)
+    if source_file is None:
+        raise HTTPException(status_code=404, detail="document source file is unavailable")
+    filename = Path(document.name.replace("\r", "").replace("\n", "")).name or "document"
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="documents.downloaded",
+        resource_type="document",
+        resource_id=str(document.id),
+        details={"filename": filename},
+    )
+    await db.commit()
+    return FileResponse(
+        path=source_file,
+        filename=filename,
+        media_type=media_type,
+        content_disposition_type="attachment",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.post("/{document_id}/reindex", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)

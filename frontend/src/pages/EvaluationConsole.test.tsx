@@ -241,7 +241,10 @@ describe("Evaluation Console pages", () => {
   });
 
   afterEach(() => {
-    setVisibility("visible");
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
     vi.useRealTimers();
   });
 
@@ -657,6 +660,7 @@ describe("Evaluation Console pages", () => {
       `/app/evaluations/runs/${candidateRunId}`,
     );
 
+    expect(await screen.findByRole("heading", { name: "汇总指标" })).toBeVisible();
     await user.click(await screen.findByRole("button", { name: "重算指标" }));
 
     await waitFor(() => {
@@ -734,6 +738,7 @@ describe("Evaluation Console pages", () => {
       `/app/evaluations/runs/${candidateRunId}`,
     );
 
+    expect(await screen.findByRole("heading", { name: "汇总指标" })).toBeVisible();
     const baselineInput = await screen.findByLabelText("基线运行 UUID");
     await user.type(baselineInput, baselineRunId);
     await user.click(screen.getByText("高级阈值"));
@@ -803,6 +808,7 @@ describe("Evaluation Console pages", () => {
       `/app/evaluations/runs/${candidateRunId}`,
     );
 
+    expect(await screen.findByRole("heading", { name: "汇总指标" })).toBeVisible();
     const baselineInput = await screen.findByLabelText("基线运行 UUID");
     await user.type(baselineInput, baselineRunId);
     await user.click(screen.getByText("高级阈值"));

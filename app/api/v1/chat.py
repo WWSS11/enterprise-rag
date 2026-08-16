@@ -102,10 +102,15 @@ async def _run_chat(
         validate_rag_configuration()
         context = await _prepare_chat(request, db, identity)
         result = await get_rag_graph().ainvoke(_graph_input(request, tenant_id, user_id, context))
-    except RuntimeError as exc:
+    except HTTPException:
         await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        await logger.aexception("chat_request_failed")
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RAG model service is temporarily unavailable",
         ) from exc
 
     citations = result.get("citations", [])
@@ -226,14 +231,17 @@ async def chat_stream(
                 "chat_stream_disconnected", conversation_id=str(context.conversation.id)
             )
             raise
-        except Exception as exc:
+        except Exception:
             await db.rollback()
             await logger.aexception(
                 "chat_stream_failed", conversation_id=str(context.conversation.id)
             )
             yield _sse(
                 "error",
-                {"code": "rag_stream_failed", "message": str(exc)[:500]},
+                {
+                    "code": "rag_stream_failed",
+                    "message": "RAG model service is temporarily unavailable",
+                },
             )
 
     return StreamingResponse(

@@ -1,5 +1,8 @@
+from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -20,8 +23,10 @@ from app.schemas.evaluation import (
     EvaluationCasePage,
     EvaluationCaseRead,
     EvaluationCaseUpdate,
+    EvaluationDatasetCopy,
     EvaluationDatasetCreate,
     EvaluationDatasetRead,
+    EvaluationDatasetUpdate,
     EvaluationQualityGateReport,
     EvaluationQualityGateRequest,
     EvaluationReport,
@@ -44,9 +49,11 @@ from app.services.evaluation_service import (
     recalculate_evaluation_run_metrics,
 )
 from app.services.knowledge_base_service import knowledge_base_service
+from app.workers.celery_app import celery_app
 from app.workers.tasks import run_evaluation_task
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
 
 
 async def _authorize_dataset(
@@ -54,9 +61,23 @@ async def _authorize_dataset(
     dataset_id: UUID,
     identity: RequestIdentity,
     required_permission: str = "reader",
+    *,
+    for_update: bool = False,
+    require_active: bool = True,
 ) -> EvaluationDataset:
-    dataset = await db.get(EvaluationDataset, dataset_id)
-    if dataset is None or dataset.tenant_id != identity.tenant_id or dataset.status != "active":
+    if for_update:
+        dataset = await db.scalar(
+            select(EvaluationDataset)
+            .where(EvaluationDataset.id == dataset_id)
+            .with_for_update()
+        )
+    else:
+        dataset = await db.get(EvaluationDataset, dataset_id)
+    if (
+        dataset is None
+        or dataset.tenant_id != identity.tenant_id
+        or (require_active and dataset.status != "active")
+    ):
         raise HTTPException(status_code=404, detail="evaluation dataset not found")
     try:
         await knowledge_base_service.authorize_identity(
@@ -106,6 +127,28 @@ async def _validate_expected_documents(
                 ),
                 "document_ids": sorted(str(item) for item in missing),
             },
+        )
+
+
+async def _ensure_no_active_dataset_runs(
+    db: AsyncSession,
+    dataset_id: UUID,
+) -> None:
+    active_runs = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(EvaluationRun)
+            .where(
+                EvaluationRun.dataset_id == dataset_id,
+                EvaluationRun.status.in_(["queued", "running"]),
+            )
+        )
+        or 0
+    )
+    if active_runs:
+        raise HTTPException(
+            status_code=409,
+            detail="evaluation dataset cannot be archived while a run is queued or running",
         )
 
 
@@ -234,21 +277,34 @@ async def create_dataset(
 
 @router.get("/datasets", response_model=list[EvaluationDatasetRead])
 async def list_datasets(
+    search: str | None = Query(default=None, alias="q", max_length=200),
+    dataset_status: Literal["active", "archived", "all"] = Query(
+        default="active", alias="status"
+    ),
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[EvaluationDataset]:
     tenant_id = identity.tenant_id
-    query = select(EvaluationDataset).where(
-        EvaluationDataset.tenant_id == tenant_id,
-        EvaluationDataset.status == "active",
-    )
+    query = select(EvaluationDataset).where(EvaluationDataset.tenant_id == tenant_id)
+    if dataset_status != "all":
+        query = query.where(EvaluationDataset.status == dataset_status)
     if not identity.is_admin:
         accessible = await knowledge_base_service.list_accessible_identity(db, identity)
         query = query.where(
             EvaluationDataset.knowledge_base_id.in_([item.id for item in accessible])
         )
+    if search:
+        query = query.where(EvaluationDataset.name.ilike(f"%{search}%"))
     datasets = list(
-        (await db.execute(query.order_by(EvaluationDataset.created_at.desc()))).scalars()
+        (
+            await db.execute(
+                query.order_by(EvaluationDataset.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).scalars()
     )
     await db.commit()
     return datasets
@@ -260,7 +316,141 @@ async def get_dataset(
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationDataset:
-    return await _authorize_dataset(db, dataset_id, identity)
+    return await _authorize_dataset(
+        db, dataset_id, identity, require_active=False
+    )
+
+
+@router.patch("/datasets/{dataset_id}", response_model=EvaluationDatasetRead)
+async def update_dataset(
+    dataset_id: UUID,
+    payload: EvaluationDatasetUpdate,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationDataset:
+    dataset = await _authorize_dataset(
+        db, dataset_id, identity, "editor", for_update=True
+    )
+    previous_name = dataset.name
+    dataset.name = payload.name
+    dataset.description = payload.description
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.dataset_updated",
+        resource_type="evaluation_dataset",
+        resource_id=str(dataset.id),
+        details={"previous_name": previous_name, "name": dataset.name},
+    )
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="evaluation dataset name already exists"
+        ) from exc
+    await db.refresh(dataset)
+    return dataset
+
+
+@router.post("/datasets/{dataset_id}/archive", response_model=EvaluationDatasetRead)
+async def archive_dataset(
+    dataset_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationDataset:
+    dataset = await _authorize_dataset(
+        db, dataset_id, identity, "editor", for_update=True
+    )
+    await _ensure_no_active_dataset_runs(db, dataset.id)
+    dataset.status = "archived"
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.dataset_archived",
+        resource_type="evaluation_dataset",
+        resource_id=str(dataset.id),
+        details={"knowledge_base_id": str(dataset.knowledge_base_id)},
+    )
+    await db.commit()
+    await db.refresh(dataset)
+    return dataset
+
+
+@router.post(
+    "/datasets/{dataset_id}/copy",
+    response_model=EvaluationDatasetRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def copy_dataset(
+    dataset_id: UUID,
+    payload: EvaluationDatasetCopy,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationDataset:
+    source = await _authorize_dataset(db, dataset_id, identity, "editor")
+    source_cases = list(
+        (
+            await db.execute(
+                select(EvaluationCase)
+                .where(EvaluationCase.dataset_id == source.id)
+                .order_by(EvaluationCase.created_at, EvaluationCase.id)
+            )
+        ).scalars()
+    )
+    copied = EvaluationDataset(
+        tenant_id=source.tenant_id,
+        knowledge_base_id=source.knowledge_base_id,
+        name=payload.name,
+        description=payload.description,
+        status="active",
+        created_by=identity.user_id,
+    )
+    db.add(copied)
+    await db.flush()
+    db.add_all(
+        [
+            EvaluationCase(
+                dataset_id=copied.id,
+                question=item.question,
+                reference_answer=item.reference_answer,
+                expected_document_ids=list(item.expected_document_ids),
+                acceptable_citation_document_ids=list(
+                    item.acceptable_citation_document_ids
+                ),
+                required_key_points=list(item.required_key_points),
+                required_key_point_groups=[
+                    list(group) for group in item.required_key_point_groups
+                ],
+                should_refuse=item.should_refuse,
+                tags=list(item.tags),
+            )
+            for item in source_cases
+        ]
+    )
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.dataset_copied",
+        resource_type="evaluation_dataset",
+        resource_id=str(copied.id),
+        details={
+            "source_dataset_id": str(source.id),
+            "case_count": len(source_cases),
+        },
+    )
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="evaluation dataset name already exists"
+        ) from exc
+    await db.refresh(copied)
+    return copied
 
 
 @router.post(
@@ -276,7 +466,9 @@ async def create_case(
 ) -> EvaluationCase:
     tenant_id = identity.tenant_id
     user_id = identity.user_id
-    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
+    dataset = await _authorize_dataset(
+        db, dataset_id, identity, "editor", for_update=True
+    )
     await _validate_expected_documents(db, dataset, [payload])
     case = _case_from_payload(dataset.id, payload)
     db.add(case)
@@ -308,7 +500,9 @@ async def create_cases_bulk(
 ) -> list[EvaluationCase]:
     tenant_id = identity.tenant_id
     user_id = identity.user_id
-    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
+    dataset = await _authorize_dataset(
+        db, dataset_id, identity, "editor", for_update=True
+    )
     await _validate_expected_documents(db, dataset, payload.cases)
     cases = [_case_from_payload(dataset.id, item) for item in payload.cases]
     db.add_all(cases)
@@ -336,7 +530,7 @@ async def list_cases(
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationCasePage:
-    await _authorize_dataset(db, dataset_id, identity)
+    await _authorize_dataset(db, dataset_id, identity, require_active=False)
     conditions = [EvaluationCase.dataset_id == dataset_id]
     if query:
         search = f"%{query.strip()}%"
@@ -379,7 +573,9 @@ async def update_case(
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> EvaluationCase:
-    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
+    dataset = await _authorize_dataset(
+        db, dataset_id, identity, "editor", for_update=True
+    )
     case = await _mutable_case(db, dataset, case_id)
     await _validate_expected_documents(db, dataset, [payload])
     _apply_case_payload(case, payload)
@@ -407,7 +603,9 @@ async def delete_case(
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    dataset = await _authorize_dataset(db, dataset_id, identity, "editor")
+    dataset = await _authorize_dataset(
+        db, dataset_id, identity, "editor", for_update=True
+    )
     case = await _mutable_case(db, dataset, case_id)
     details = {"dataset_id": str(dataset.id), "should_refuse": case.should_refuse}
     await db.delete(case)
@@ -432,7 +630,9 @@ async def create_run(
 ) -> EvaluationRun:
     tenant_id = identity.tenant_id
     user_id = identity.user_id
-    dataset = await _authorize_dataset(db, payload.dataset_id, identity, "editor")
+    dataset = await _authorize_dataset(
+        db, payload.dataset_id, identity, "editor", for_update=True
+    )
     case_count = await db.scalar(
         select(func.count())
         .select_from(EvaluationCase)
@@ -486,7 +686,9 @@ async def list_runs(
 ) -> EvaluationRunPage:
     conditions = [EvaluationRun.tenant_id == identity.tenant_id]
     if dataset_id is not None:
-        dataset = await _authorize_dataset(db, dataset_id, identity)
+        dataset = await _authorize_dataset(
+            db, dataset_id, identity, require_active=False
+        )
         conditions.append(EvaluationRun.dataset_id == dataset.id)
     elif not identity.is_admin:
         accessible = await knowledge_base_service.list_accessible_identity(db, identity)
@@ -515,12 +717,21 @@ async def list_runs(
 
 
 async def _authorize_run(
-    db: AsyncSession, run_id: UUID, identity: RequestIdentity
+    db: AsyncSession,
+    run_id: UUID,
+    identity: RequestIdentity,
+    required_permission: str = "reader",
 ) -> tuple[EvaluationRun, EvaluationDataset]:
     run = await db.get(EvaluationRun, run_id)
     if run is None or run.tenant_id != identity.tenant_id:
         raise HTTPException(status_code=404, detail="evaluation run not found")
-    dataset = await _authorize_dataset(db, run.dataset_id, identity)
+    dataset = await _authorize_dataset(
+        db,
+        run.dataset_id,
+        identity,
+        required_permission,
+        require_active=False,
+    )
     return run, dataset
 
 
@@ -532,6 +743,140 @@ async def get_run(
 ) -> EvaluationRun:
     run, _ = await _authorize_run(db, run_id, identity)
     return run
+
+
+@router.post("/runs/{run_id}/cancel", response_model=EvaluationRunRead)
+async def cancel_run(
+    run_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationRun:
+    run = await db.scalar(
+        select(EvaluationRun).where(EvaluationRun.id == run_id).with_for_update()
+    )
+    if run is None or run.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=404, detail="evaluation run not found")
+    await _authorize_dataset(db, run.dataset_id, identity, "editor")
+    if run.status != "queued":
+        raise HTTPException(
+            status_code=409,
+            detail="only queued evaluation runs can be cancelled",
+        )
+
+    run.status = "cancelled"
+    run.cancelled_at = datetime.now(UTC)
+    run.cancelled_by = identity.user_id
+    run.completed_at = run.cancelled_at
+    run.error_message = None
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.run_cancelled",
+        resource_type="evaluation_run",
+        resource_id=str(run.id),
+        details={"dataset_id": str(run.dataset_id), "task_id": run.task_id},
+    )
+    await db.commit()
+    await db.refresh(run)
+    if run.task_id:
+        try:
+            celery_app.control.revoke(run.task_id, terminate=False)
+        except Exception as exc:
+            await logger.awarning(
+                "evaluation_cancel_revoke_broadcast_failed",
+                run_id=str(run.id),
+                error_type=type(exc).__name__,
+            )
+    return run
+
+
+@router.post(
+    "/runs/{run_id}/retry",
+    response_model=EvaluationRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_run(
+    run_id: UUID,
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+) -> EvaluationRun:
+    original = await db.scalar(
+        select(EvaluationRun).where(EvaluationRun.id == run_id).with_for_update()
+    )
+    if original is None or original.tenant_id != identity.tenant_id:
+        raise HTTPException(status_code=404, detail="evaluation run not found")
+    dataset = await _authorize_dataset(db, original.dataset_id, identity, "editor")
+    if original.status not in {"failed", "cancelled"}:
+        raise HTTPException(
+            status_code=409,
+            detail="only failed or cancelled evaluation runs can be retried",
+        )
+    case_count = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(EvaluationCase)
+            .where(EvaluationCase.dataset_id == dataset.id)
+        )
+        or 0
+    )
+    if not case_count:
+        raise HTTPException(status_code=409, detail="evaluation dataset has no cases")
+    current_snapshot = build_config_snapshot()
+    if current_snapshot != original.config_snapshot:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "evaluation configuration changed; start a new run instead of retrying "
+                "the failed snapshot"
+            ),
+        )
+
+    task_id = str(uuid4())
+    retry = EvaluationRun(
+        tenant_id=original.tenant_id,
+        knowledge_base_id=original.knowledge_base_id,
+        dataset_id=original.dataset_id,
+        retry_of_run_id=original.id,
+        created_by=identity.user_id,
+        task_id=task_id,
+        status="queued",
+        total_cases=case_count,
+        config_snapshot=current_snapshot,
+    )
+    db.add(retry)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="an active retry already exists for this evaluation run",
+        ) from exc
+    record_audit(
+        db,
+        tenant_id=identity.tenant_id,
+        user_id=identity.user_id,
+        action="evaluations.run_retry_requested",
+        resource_type="evaluation_run",
+        resource_id=str(retry.id),
+        details={
+            "retry_of_run_id": str(original.id),
+            "dataset_id": str(original.dataset_id),
+            "case_count": case_count,
+        },
+    )
+    await db.commit()
+    await db.refresh(retry)
+    try:
+        run_evaluation_task.apply_async(args=[str(retry.id)], task_id=task_id)
+    except Exception as exc:
+        retry.status = "failed"
+        retry.error_message = f"failed to dispatch retry task: {exc}"[:4_000]
+        retry.completed_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(status_code=503, detail="failed to dispatch retry task") from exc
+    return retry
 
 
 async def _comparison_runs(

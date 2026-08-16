@@ -23,7 +23,30 @@ logger = structlog.get_logger(__name__)
 
 
 class FeishuAPIError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        operation: str,
+        code: int | None = None,
+        log_id: str | None = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message[:500])
+        self.operation = operation
+        self.code = code
+        self.log_id = log_id[:255] if log_id else None
+        self.retryable = retryable
+
+    def failure_details(self) -> dict[str, object]:
+        return {
+            "category": "feishu_api",
+            "operation": self.operation,
+            "message": str(self),
+            "error_code": self.code,
+            "log_id": self.log_id,
+            "retryable": self.retryable,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,23 +113,39 @@ class FeishuClient:
             cached = await redis_service.client.get(cache_key)
             if cached:
                 return str(cached)
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    f"{self.settings.feishu_base_url.rstrip('/')}/auth/v3/tenant_access_token/internal",
-                    json={
-                        "app_id": self.settings.feishu_app_id,
-                        "app_secret": self.settings.feishu_app_secret,
-                    },
-                )
-                response.raise_for_status()
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(
+                        f"{self.settings.feishu_base_url.rstrip('/')}/auth/v3/tenant_access_token/internal",
+                        json={
+                            "app_id": self.settings.feishu_app_id,
+                            "app_secret": self.settings.feishu_app_secret.get_secret_value(),
+                        },
+                    )
+                log_id = response.headers.get("x-tt-logid")
                 payload = response.json()
-            if int(payload.get("code", 0)) != 0:
+            except (httpx.HTTPError, ValueError) as exc:
                 raise FeishuAPIError(
-                    f"Feishu token request failed: {payload.get('msg', 'unknown error')}"
+                    "Feishu authentication endpoint is unavailable",
+                    operation="tenant_access_token",
+                    retryable=True,
+                ) from exc
+            code = int(payload.get("code", 0))
+            if not response.is_success or code != 0:
+                raise FeishuAPIError(
+                    str(payload.get("msg") or "Feishu authentication failed"),
+                    operation="tenant_access_token",
+                    code=code or None,
+                    log_id=log_id,
+                    retryable=response.status_code == 429 or response.status_code >= 500,
                 )
             token = str(payload.get("tenant_access_token", ""))
             if not token:
-                raise FeishuAPIError("Feishu token response did not contain a token")
+                raise FeishuAPIError(
+                    "Feishu authentication response did not contain a token",
+                    operation="tenant_access_token",
+                    log_id=log_id,
+                )
             expires_in = max(60, int(payload.get("expire", 7_200)) - 60)
             await redis_service.client.set(cache_key, token, ex=expires_in)
             return token
@@ -130,21 +169,57 @@ class FeishuClient:
                         params=params,
                         headers={"Authorization": f"Bearer {token}"},
                     )
-                if response.status_code == 429 or response.status_code >= 500:
-                    response.raise_for_status()
-                response.raise_for_status()
-                payload = response.json()
-                if int(payload.get("code", 0)) != 0:
-                    raise FeishuAPIError(
-                        f"Feishu API {path} failed: {payload.get('msg', 'unknown error')}"
+                log_id = response.headers.get("x-tt-logid")
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                code = int(payload.get("code", 0)) if payload else None
+                if not response.is_success or code not in {None, 0}:
+                    error = FeishuAPIError(
+                        str(payload.get("msg") or "Feishu rejected the API request"),
+                        operation=path,
+                        code=code,
+                        log_id=log_id,
+                        retryable=(
+                            response.status_code == 429 or response.status_code >= 500
+                        ),
                     )
+                    if not error.retryable:
+                        raise error
+                    last_error = error
+                    if attempt == 2:
+                        break
+                    await asyncio.sleep(2**attempt)
+                    continue
                 return dict(payload.get("data") or {})
-            except (httpx.HTTPError, ValueError, FeishuAPIError) as exc:
+            except FeishuAPIError:
+                raise
+            except (httpx.HTTPError, TypeError, ValueError) as exc:
                 last_error = exc
                 if attempt == 2:
                     break
                 await asyncio.sleep(2**attempt)
-        raise FeishuAPIError(f"Feishu API request failed: {last_error}")
+        if isinstance(last_error, FeishuAPIError):
+            raise last_error
+        raise FeishuAPIError(
+            "Feishu API endpoint is unavailable",
+            operation=path,
+            retryable=True,
+        ) from last_error
+
+    async def diagnose_space(self, space_id: str) -> dict[str, object]:
+        await self._tenant_access_token()
+        data = await self._request(
+            "GET",
+            f"wiki/v2/spaces/{space_id}/nodes",
+            params={"page_size": 1},
+        )
+        items = data.get("items", [])
+        return {
+            "visible_nodes": len(items) if isinstance(items, list) else 0,
+            "has_more": bool(data.get("has_more", False)),
+        }
 
     async def list_wiki_nodes(self, space_id: str) -> list[FeishuNode]:
         nodes: list[FeishuNode] = []
@@ -181,7 +256,13 @@ class FeishuClient:
                         parents.append(node.node_token)
                 if not data.get("has_more"):
                     break
-                page_token = str(data.get("page_token", "")) or None
+                next_page_token = str(data.get("page_token", "")) or None
+                if next_page_token is None or next_page_token == page_token:
+                    raise FeishuAPIError(
+                        "Feishu Wiki returned an invalid pagination cursor",
+                        operation=f"wiki/v2/spaces/{space_id}/nodes",
+                    )
+                page_token = next_page_token
         return nodes
 
     async def _docx_content(self, document_id: str) -> str:
@@ -291,7 +372,11 @@ async def prepare_feishu_sync() -> tuple[
     list[ConnectorDispatch], list[DeleteDispatch], dict[str, int | str]
 ]:
     settings = get_settings()
-    if not settings.feishu_app_id or not settings.feishu_app_secret or not settings.feishu_space_id:
+    if (
+        not settings.feishu_app_id
+        or not settings.feishu_app_secret.get_secret_value()
+        or not settings.feishu_space_id
+    ):
         raise RuntimeError("Feishu sync requires app id, app secret and space id")
 
     async with AsyncSessionFactory() as db:

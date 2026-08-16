@@ -183,6 +183,7 @@ def test_active_job_partial_indexes_are_declared() -> None:
 
     assert indexes["uq_ingestion_jobs_active_document"].unique is True
     assert indexes["uq_ingestion_jobs_active_rebuild"].unique is True
+    assert indexes["uq_ingestion_jobs_active_retry"].unique is True
     assert "queued" in str(
         indexes["uq_ingestion_jobs_active_document"].dialect_options["postgresql"]["where"]
     )

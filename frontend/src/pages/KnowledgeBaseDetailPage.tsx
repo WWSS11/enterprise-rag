@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "@/i18n";
 import { formatDateTime } from "@/i18n/format";
 import { useAuth } from "@/auth/useAuth";
+import { knowledgeBaseMemberUpsertSchema, type DirectoryPrincipal } from "@/api/types";
 import { EmptyState } from "@/components/EmptyState";
 import { Button } from "@/components/Button";
 import { OperationError } from "@/components/OperationError";
@@ -40,8 +41,38 @@ export function KnowledgeBaseDetailPage() {
   const locale = i18n.language as AppLocale;
   const [principalType, setPrincipalType] = useState<"user" | "group">("user");
   const [principalId, setPrincipalId] = useState("");
+  const [directoryQuery, setDirectoryQuery] = useState("");
+  const [debouncedDirectoryQuery, setDebouncedDirectoryQuery] = useState("");
+  const [directoryOffset, setDirectoryOffset] = useState(0);
+  const [selectedPrincipal, setSelectedPrincipal] = useState<DirectoryPrincipal | null>(null);
   const [permission, setPermission] = useState<"reader" | "editor" | "owner">("reader");
   const [memberValidation, setMemberValidation] = useState<string | null>(null);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedDirectoryQuery(directoryQuery.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [directoryQuery]);
+  const directorySearch = useQuery({
+    queryKey: [
+      "knowledge-base-directory",
+      knowledgeBaseId,
+      principalType,
+      debouncedDirectoryQuery,
+      directoryOffset,
+    ],
+    queryFn: () =>
+      api.searchKnowledgeBaseDirectory(knowledgeBaseId ?? "", {
+        principalType,
+        query: debouncedDirectoryQuery,
+        limit: 20,
+        offset: directoryOffset,
+      }),
+    enabled: Boolean(
+      knowledgeBaseId && canManageMembers && debouncedDirectoryQuery.length >= 2,
+    ),
+    staleTime: 30_000,
+  });
   const memberMutation = useMutation({
     mutationFn: () =>
       api.upsertKnowledgeBaseMember(knowledgeBaseId ?? "", {
@@ -51,6 +82,10 @@ export function KnowledgeBaseDetailPage() {
       }),
     onSuccess: async () => {
       setPrincipalId("");
+      setDirectoryQuery("");
+      setDebouncedDirectoryQuery("");
+      setDirectoryOffset(0);
+      setSelectedPrincipal(null);
       setMemberValidation(null);
       await queryClient.invalidateQueries({ queryKey: ["knowledge-base-members", knowledgeBaseId] });
     },
@@ -87,7 +122,17 @@ export function KnowledgeBaseDetailPage() {
     event.preventDefault();
     memberMutation.reset();
     const cleanPrincipalId = principalId.trim();
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(cleanPrincipalId)) {
+    const validPrincipalId = knowledgeBaseMemberUpsertSchema.safeParse({
+      principal_type: principalType,
+      principal_id: cleanPrincipalId,
+      permission,
+    }).success;
+    if (
+      selectedPrincipal === null
+      || selectedPrincipal.principal_type !== principalType
+      || selectedPrincipal.principal_id !== cleanPrincipalId
+      || !validPrincipalId
+    ) {
       setMemberValidation(t("knowledgeBases:memberPrincipalValidation"));
       return;
     }
@@ -297,22 +342,123 @@ export function KnowledgeBaseDetailPage() {
               <select
                 id="member-principal-type"
                 value={principalType}
-                onChange={(event) => setPrincipalType(event.target.value as "user" | "group")}
+                onChange={(event) => {
+                  setPrincipalType(event.target.value as "user" | "group");
+                  setPrincipalId("");
+                  setDirectoryQuery("");
+                  setDebouncedDirectoryQuery("");
+                  setDirectoryOffset(0);
+                  setSelectedPrincipal(null);
+                  setMemberValidation(null);
+                  memberMutation.reset();
+                }}
               >
                 <option value="user">{t("knowledgeBases:memberUser")}</option>
                 <option value="group">{t("knowledgeBases:memberGroup")}</option>
               </select>
             </div>
             <div className={styles.formField}>
-              <label htmlFor="member-principal-id">{t("knowledgeBases:memberPrincipalId")}</label>
+              <label htmlFor="member-directory-query">
+                {principalType === "user"
+                  ? t("knowledgeBases:directoryUserSearchLabel")
+                  : t("knowledgeBases:directoryGroupSearchLabel")}
+              </label>
               <input
-                id="member-principal-id"
-                maxLength={128}
-                value={principalId}
-                onChange={(event) => setPrincipalId(event.target.value)}
+                id="member-directory-query"
+                type="search"
+                maxLength={200}
+                autoComplete="off"
+                value={directoryQuery}
+                aria-describedby="member-directory-hint"
+                onChange={(event) => {
+                  setDirectoryQuery(event.target.value);
+                  setDirectoryOffset(0);
+                  setPrincipalId("");
+                  setSelectedPrincipal(null);
+                  setMemberValidation(null);
+                  memberMutation.reset();
+                }}
               />
-              <span className={styles.fieldHint}>{t("knowledgeBases:memberPrincipalHint")}</span>
+              <span id="member-directory-hint" className={styles.fieldHint}>
+                {t("knowledgeBases:directorySearchHint")}
+              </span>
             </div>
+            {debouncedDirectoryQuery.length >= 2 && directorySearch.isLoading ? (
+              <p aria-live="polite">{t("knowledgeBases:directorySearching")}</p>
+            ) : null}
+            {directorySearch.isError ? (
+              <OperationError
+                error={directorySearch.error}
+                onRetry={() => void directorySearch.refetch()}
+              />
+            ) : null}
+            {directorySearch.isSuccess && directorySearch.data.length === 0 ? (
+              <p>{t("knowledgeBases:directoryEmpty")}</p>
+            ) : null}
+            {directorySearch.data?.length ? (
+              <ul className={styles.directoryResults} aria-label={t("knowledgeBases:directoryResults")}>
+                {directorySearch.data.map((principal) => (
+                  <li key={`${principal.principal_type}:${principal.principal_id}`}>
+                    <button
+                      type="button"
+                      aria-pressed={selectedPrincipal?.principal_id === principal.principal_id}
+                      onClick={() => {
+                        setSelectedPrincipal(principal);
+                        setPrincipalId(principal.principal_id);
+                        setMemberValidation(null);
+                      }}
+                    >
+                      <span>
+                        <strong>{principal.display_name}</strong>
+                        {principal.secondary_text ? <small>{principal.secondary_text}</small> : null}
+                        <code>{principal.principal_id}</code>
+                      </span>
+                      <b>{t("knowledgeBases:directorySelect")}</b>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {directorySearch.isSuccess && (directoryOffset > 0 || directorySearch.data.length === 20) ? (
+              <div className={styles.directoryPagination}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={directoryOffset === 0 || directorySearch.isFetching}
+                  onClick={() => {
+                    setDirectoryOffset((current) => Math.max(0, current - 20));
+                    setPrincipalId("");
+                    setSelectedPrincipal(null);
+                  }}
+                >
+                  {t("knowledgeBases:directoryPrevious")}
+                </Button>
+                <span>
+                  {t("knowledgeBases:directoryPage", {
+                    page: Math.floor(directoryOffset / 20) + 1,
+                  })}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={directorySearch.data.length < 20 || directorySearch.isFetching}
+                  onClick={() => {
+                    setDirectoryOffset((current) => current + 20);
+                    setPrincipalId("");
+                    setSelectedPrincipal(null);
+                  }}
+                >
+                  {t("knowledgeBases:directoryNext")}
+                </Button>
+              </div>
+            ) : null}
+            {selectedPrincipal ? (
+              <div className={styles.selectedPrincipal} role="status">
+                <span>{t("knowledgeBases:directorySelected")}</span>
+                <strong>{selectedPrincipal.display_name}</strong>
+                <code>{selectedPrincipal.principal_id}</code>
+              </div>
+            ) : null}
             <div className={styles.formField}>
               <label htmlFor="member-permission">{t("knowledgeBases:memberPermission")}</label>
               <select
@@ -340,7 +486,7 @@ export function KnowledgeBaseDetailPage() {
               </p>
             ) : null}
             <div className={styles.formActions}>
-              <Button type="submit" disabled={memberMutation.isPending || !principalId.trim()}>
+              <Button type="submit" disabled={memberMutation.isPending || !selectedPrincipal}>
                 {memberMutation.isPending
                   ? t("knowledgeBases:memberSaving")
                   : t("knowledgeBases:memberSave")}

@@ -11,6 +11,10 @@ import { OperationError } from "@/components/OperationError";
 import { StatusPill, type StatusTone } from "@/components/StatusPill";
 import { JobStatus } from "@/jobs/JobStatus";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
+import {
+  DocumentPreviewDialog,
+  type DocumentPreviewTarget,
+} from "./DocumentPreviewDialog";
 import styles from "./DocumentOperations.module.css";
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -24,7 +28,6 @@ export const SUPPORTED_DOCUMENT_EXTENSIONS = [
   ".docx",
   ".pptx",
   ".xlsx",
-  ".xlsm",
   ".xls",
   ".html",
   ".htm",
@@ -108,6 +111,12 @@ export function DocumentOperations({
     error: unknown;
   } | null>(null);
   const [documentJobs, setDocumentJobs] = useState<Record<string, string>>({});
+  const [previewTarget, setPreviewTarget] = useState<DocumentPreviewTarget | null>(null);
+  const [downloadingDocumentId, setDownloadingDocumentId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<{
+    documentId: string;
+    error: unknown;
+  } | null>(null);
   const locale = i18n.language as AppLocale;
 
   const documents = useQuery({
@@ -219,6 +228,25 @@ export function DocumentOperations({
       setDocumentActionError({ documentId: document.id, action, error });
     } finally {
       setPendingAction(null);
+    }
+  }
+
+  async function downloadDocument(document: DocumentRecord) {
+    if (downloadingDocumentId) return;
+    setDownloadingDocumentId(document.id);
+    setDownloadError(null);
+    try {
+      const blob = await api.downloadDocument(document.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = document.name;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (error) {
+      setDownloadError({ documentId: document.id, error });
+    } finally {
+      setDownloadingDocumentId(null);
     }
   }
 
@@ -414,13 +442,35 @@ export function DocumentOperations({
                       <dd>{formatDateTime(locale, document.updated_at)}</dd>
                     </div>
                   </dl>
-                  {canEdit ? (
-                    <div className={styles.documentActions}>
+                  <div className={styles.documentActions}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={document.chunk_count === 0}
+                      onClick={() => setPreviewTarget({
+                        documentId: document.id,
+                        documentName: document.name,
+                      })}
+                    >
+                      {t("documents:preview")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!document.source_available || downloadingDocumentId !== null}
+                      onClick={() => void downloadDocument(document)}
+                    >
+                      {downloadingDocumentId === document.id
+                        ? t("documents:downloading")
+                        : t("documents:download")}
+                    </Button>
+                    {canEdit ? (
+                      <>
                       <Button
                         type="button"
                         variant="secondary"
-                        disabled={active || !document.source_uri || pendingAction !== null}
-                        title={!document.source_uri ? t("documents:reindexUnavailable") : undefined}
+                        disabled={active || !document.source_available || pendingAction !== null}
+                        title={!document.source_available ? t("documents:reindexUnavailable") : undefined}
                         onClick={() => void runDocumentAction(document, "reindex")}
                       >
                         {pendingAction === reindexAction
@@ -437,8 +487,9 @@ export function DocumentOperations({
                           ? t("documents:deleteStarting")
                           : t("documents:delete")}
                       </Button>
-                    </div>
-                  ) : null}
+                      </>
+                    ) : null}
+                  </div>
                   {documentActionError?.documentId === document.id ? (
                     <div className={styles.documentOperationResult}>
                       <OperationError
@@ -446,6 +497,14 @@ export function DocumentOperations({
                         onRetry={() =>
                           void runDocumentAction(document, documentActionError.action)
                         }
+                      />
+                    </div>
+                  ) : null}
+                  {downloadError?.documentId === document.id ? (
+                    <div className={styles.documentOperationResult}>
+                      <OperationError
+                        error={downloadError.error}
+                        onRetry={() => void downloadDocument(document)}
                       />
                     </div>
                   ) : null}
@@ -460,6 +519,12 @@ export function DocumentOperations({
           </ul>
         ) : null}
       </section>
+      {previewTarget ? (
+        <DocumentPreviewDialog
+          target={previewTarget}
+          onClose={() => setPreviewTarget(null)}
+        />
+      ) : null}
     </div>
   );
 }

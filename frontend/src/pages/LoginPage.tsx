@@ -6,7 +6,7 @@ import { config } from "@/config/env";
 import { Button } from "@/components/Button";
 import { AppLoadingSkeleton } from "@/components/AppLoadingSkeleton";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { consumeJustLoggedOut } from "@/auth/sessionPaths";
+import { consumeJustLoggedOut, safeReturnPath } from "@/auth/sessionPaths";
 import styles from "./LoginPage.module.css";
 
 function returnPathFromState(state: unknown): string | null {
@@ -33,7 +33,7 @@ export function LoginPage() {
       new URLSearchParams(location.search).get("logged_out") === "1",
   );
 
-  const returnPath = returnPathFromState(location.state) ?? "/app/chat";
+  const returnPath = safeReturnPath(returnPathFromState(location.state));
 
   useEffect(() => {
     if (status !== "anonymous") return;

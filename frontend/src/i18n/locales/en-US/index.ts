@@ -12,6 +12,7 @@ import { evaluationsEn } from "./evaluations";
 import { evaluationCasesEn } from "./evaluationCases";
 import { evaluationRunsEn } from "./evaluationRuns";
 import { qualityGatesEn } from "./qualityGates";
+import { connectorsEn } from "./connectors";
 import type { AppResources } from "../zh-CN";
 
 export const enUS = {
@@ -29,4 +30,5 @@ export const enUS = {
   evaluationCases: evaluationCasesEn,
   evaluationRuns: evaluationRunsEn,
   qualityGates: qualityGatesEn,
+  connectors: connectorsEn,
 } as const satisfies AppResources;

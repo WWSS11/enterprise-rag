@@ -4,6 +4,7 @@ from app.api.v1 import (
     audit_logs,
     auth,
     chat,
+    connectors,
     conversations,
     documents,
     evaluations,
@@ -20,6 +21,7 @@ api_router.include_router(
     conversations.router, prefix="/conversations", tags=["conversations"]
 )
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
+api_router.include_router(connectors.router, prefix="/connectors", tags=["connectors"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(evaluations.router, prefix="/evaluations", tags=["evaluations"])
 api_router.include_router(

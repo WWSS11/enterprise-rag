@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 from dataclasses import dataclass, field
@@ -25,7 +26,6 @@ SUPPORTED_EXTENSIONS = frozenset(
         ".docx",
         ".pptx",
         ".xlsx",
-        ".xlsm",
         ".xls",
         ".html",
         ".htm",
@@ -62,7 +62,59 @@ def _read_text(path: Path) -> str:
 
 def _flat_section(text: str, *, section_type: str = "prose") -> list[ParsedSection]:
     cleaned = _clean(text)
-    return [ParsedSection(text=cleaned, section_type=section_type)] if cleaned else []
+    if not cleaned:
+        return []
+    metadata = {"paragraph_start": 1, "paragraph_end": 1} if section_type == "prose" else {}
+    return [ParsedSection(text=cleaned, section_type=section_type, metadata=metadata)]
+
+
+def _excel_column(column: int) -> str:
+    output = ""
+    while column > 0:
+        column, remainder = divmod(column - 1, 26)
+        output = chr(65 + remainder) + output
+    return output or "A"
+
+
+def _cell_range(first_column: int, last_column: int, row: int) -> str:
+    start = f"{_excel_column(first_column)}{row}"
+    end = f"{_excel_column(last_column)}{row}"
+    return start if start == end else f"{start}:{end}"
+
+
+def _parse_plain_text(path: Path) -> list[ParsedSection]:
+    paragraphs = [part for part in re.split(r"\n\s*\n", _read_text(path)) if _clean(part)]
+    return [
+        ParsedSection(
+            text=_clean(paragraph),
+            metadata={"paragraph_start": index, "paragraph_end": index},
+        )
+        for index, paragraph in enumerate(paragraphs, start=1)
+    ]
+
+
+def _parse_csv(path: Path) -> list[ParsedSection]:
+    sections: list[ParsedSection] = []
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as stream:
+        for row_number, row in enumerate(csv.reader(stream), start=1):
+            populated = [index for index, value in enumerate(row, start=1) if _clean(value)]
+            if not populated:
+                continue
+            first_column, last_column = min(populated), max(populated)
+            text = "\t".join(row[first_column - 1 : last_column]).rstrip()
+            sections.append(
+                ParsedSection(
+                    text=text,
+                    title=f"第 {row_number} 行",
+                    section_type="table",
+                    metadata={
+                        "row_start": row_number,
+                        "row_end": row_number,
+                        "cell_range": _cell_range(first_column, last_column, row_number),
+                    },
+                )
+            )
+    return sections
 
 
 def _parse_markdown(path: Path) -> list[ParsedSection]:
@@ -71,17 +123,23 @@ def _parse_markdown(path: Path) -> list[ParsedSection]:
     title: str | None = None
     body: list[str] = []
     in_code_fence = False
+    paragraph_number = 0
 
     def flush() -> None:
-        nonlocal body
+        nonlocal body, paragraph_number
         text = _clean("\n".join(body))
-        if text:
+        for paragraph in (part for part in re.split(r"\n\s*\n", text) if _clean(part)):
+            paragraph_number += 1
             sections.append(
                 ParsedSection(
-                    text=text,
+                    text=_clean(paragraph),
                     title=title,
                     heading_path=tuple(heading_stack),
                     section_type="prose",
+                    metadata={
+                        "paragraph_start": paragraph_number,
+                        "paragraph_end": paragraph_number,
+                    },
                 )
             )
         body = []
@@ -136,45 +194,38 @@ def _parse_docx(path: Path) -> list[ParsedSection]:
     sections: list[ParsedSection] = []
     heading_stack: list[str] = []
     title: str | None = None
-    body: list[str] = []
-
-    def flush() -> None:
-        nonlocal body
-        text = _clean("\n".join(body))
-        if text:
-            sections.append(
-                ParsedSection(
-                    text=text,
-                    title=title,
-                    heading_path=tuple(heading_stack),
-                )
-            )
-        body = []
-
-    for paragraph in document.paragraphs:
+    for paragraph_number, paragraph in enumerate(document.paragraphs, start=1):
         text = _clean(paragraph.text)
         if not text:
             continue
         style_name = getattr(paragraph.style, "name", "") or ""
         match = WORD_HEADING.match(style_name)
         if match:
-            flush()
             level = int(match.group(1))
             heading_stack = heading_stack[: level - 1]
             heading_stack.append(text)
             title = text
         else:
-            body.append(text)
-    flush()
+            sections.append(
+                ParsedSection(
+                    text=text,
+                    title=title,
+                    heading_path=tuple(heading_stack),
+                    metadata={
+                        "paragraph_start": paragraph_number,
+                        "paragraph_end": paragraph_number,
+                    },
+                )
+            )
 
     for table_number, table in enumerate(document.tables, start=1):
-        rows = []
-        for row in table.rows:
+        for row_number, row in enumerate(table.rows, start=1):
             values = [_clean(cell.text) for cell in row.cells]
-            if any(values):
-                rows.append("\t".join(values))
-        text = _clean("\n".join(rows))
-        if text:
+            populated = [index for index, value in enumerate(values, start=1) if value]
+            if not populated:
+                continue
+            first_column, last_column = min(populated), max(populated)
+            text = "\t".join(values[first_column - 1 : last_column]).rstrip()
             table_title = f"表格 {table_number}"
             sections.append(
                 ParsedSection(
@@ -182,7 +233,14 @@ def _parse_docx(path: Path) -> list[ParsedSection]:
                     title=table_title,
                     heading_path=(*heading_stack, table_title),
                     section_type="table",
-                    metadata={"table": table_number},
+                    metadata={
+                        "table": table_title,
+                        "row_start": row_number,
+                        "row_end": row_number,
+                        "cell_range": _cell_range(
+                            first_column, last_column, row_number
+                        ),
+                    },
                 )
             )
     return sections
@@ -223,19 +281,27 @@ def _parse_xlsx(path: Path) -> list[ParsedSection]:
     try:
         sections: list[ParsedSection] = []
         for sheet in workbook.worksheets:
-            lines = [
-                "\t".join("" if cell is None else str(cell) for cell in row).rstrip()
-                for row in sheet.iter_rows(values_only=True)
-            ]
-            text = _clean("\n".join(line for line in lines if line))
-            if text:
+            for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+                values = ["" if cell is None else str(cell) for cell in row]
+                populated = [index for index, value in enumerate(values, start=1) if value]
+                if not populated:
+                    continue
+                first_column, last_column = min(populated), max(populated)
+                text = "\t".join(values[first_column - 1 : last_column]).rstrip()
                 sections.append(
                     ParsedSection(
                         text=text,
                         title=sheet.title,
                         heading_path=(sheet.title,),
                         section_type="table",
-                        metadata={"sheet": sheet.title},
+                        metadata={
+                            "sheet": sheet.title,
+                            "row_start": row_number,
+                            "row_end": row_number,
+                            "cell_range": _cell_range(
+                                first_column, last_column, row_number
+                            ),
+                        },
                     )
                 )
         return sections
@@ -248,21 +314,31 @@ def _parse_xls(path: Path) -> list[ParsedSection]:
     try:
         sections: list[ParsedSection] = []
         for sheet in workbook.sheets():
-            lines = [
-                "\t".join(
-                    str(sheet.cell_value(row, column)) for column in range(sheet.ncols)
-                ).rstrip()
-                for row in range(sheet.nrows)
-            ]
-            text = _clean("\n".join(line for line in lines if line))
-            if text:
+            for row_index in range(sheet.nrows):
+                values = [
+                    str(sheet.cell_value(row_index, column))
+                    for column in range(sheet.ncols)
+                ]
+                populated = [index for index, value in enumerate(values, start=1) if value]
+                if not populated:
+                    continue
+                first_column, last_column = min(populated), max(populated)
+                row_number = row_index + 1
+                text = "\t".join(values[first_column - 1 : last_column]).rstrip()
                 sections.append(
                     ParsedSection(
                         text=text,
                         title=sheet.name,
                         heading_path=(sheet.name,),
                         section_type="table",
-                        metadata={"sheet": sheet.name},
+                        metadata={
+                            "sheet": sheet.name,
+                            "row_start": row_number,
+                            "row_end": row_number,
+                            "cell_range": _cell_range(
+                                first_column, last_column, row_number
+                            ),
+                        },
                     )
                 )
         return sections
@@ -369,9 +445,10 @@ def parse_document_sections(path: Path) -> list[ParsedSection]:
         raise UnsupportedDocumentError(f"unsupported document type: {suffix or '<none>'}")
     if suffix == ".md":
         return _parse_markdown(path)
-    if suffix in {".txt", ".csv"}:
-        section_type = "table" if suffix == ".csv" else "prose"
-        return _flat_section(_read_text(path), section_type=section_type)
+    if suffix == ".txt":
+        return _parse_plain_text(path)
+    if suffix == ".csv":
+        return _parse_csv(path)
     if suffix == ".json":
         return _parse_json(path)
     if suffix == ".xml":
@@ -382,7 +459,7 @@ def parse_document_sections(path: Path) -> list[ParsedSection]:
         return _parse_docx(path)
     if suffix == ".pptx":
         return _parse_pptx(path)
-    if suffix in {".xlsx", ".xlsm"}:
+    if suffix == ".xlsx":
         return _parse_xlsx(path)
     if suffix == ".xls":
         return _parse_xls(path)

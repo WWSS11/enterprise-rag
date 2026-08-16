@@ -73,7 +73,7 @@ function readyDocument() {
     name: "Retention policy.pdf",
     source_type: "upload",
     source_key: null,
-    source_uri: "data/uploads/retention-policy.pdf",
+    source_available: true,
     source_updated_at: null,
     content_type: "application/pdf",
     size_bytes: 2048,

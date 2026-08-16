@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/useAuth";
@@ -15,6 +15,7 @@ export function EvaluationRunPage() {
   const { t } = useTranslation(["evaluationRuns", "evaluations"]);
   const { api, identity } = useAuth();
   const visible = usePageVisibility();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const run = useQuery({
     queryKey: ["evaluation-run", runId],
@@ -39,6 +40,20 @@ export function EvaluationRunPage() {
       await run.refetch();
     },
   });
+  const cancel = useMutation({
+    mutationFn: () => api.cancelEvaluationRun(runId),
+    onSuccess: async (updated) => {
+      queryClient.setQueryData(["evaluation-run", runId], updated);
+      await queryClient.invalidateQueries({ queryKey: ["evaluation-runs"] });
+    },
+  });
+  const retry = useMutation({
+    mutationFn: () => api.retryEvaluationRun(runId),
+    onSuccess: async (created) => {
+      await queryClient.invalidateQueries({ queryKey: ["evaluation-runs"] });
+      navigate(`/app/evaluations/runs/${created.id}`);
+    },
+  });
 
   if (run.isLoading) return <section className={styles.loading} aria-busy="true">{t("evaluationRuns:loading")}</section>;
   if (run.isError) return <OperationError error={run.error} onRetry={() => void run.refetch()} />;
@@ -49,7 +64,20 @@ export function EvaluationRunPage() {
   return (
     <div className={styles.page}>
       <div className={styles.breadcrumbRow}><Link className={styles.secondaryLink} to={`/app/evaluations/datasets/${run.data.dataset_id}`}>{t("evaluations:detailTitle")}</Link></div>
-      <EvaluationRunPanel run={run.data} visible={visible} canRecalculate={canRecalculate} recalculating={recalculate.isPending} recalculateError={recalculate.error} onRecalculate={() => recalculate.mutate()} />
+      <EvaluationRunPanel
+        run={run.data}
+        visible={visible}
+        canRecalculate={canRecalculate}
+        recalculating={recalculate.isPending}
+        recalculateError={recalculate.error}
+        onRecalculate={() => recalculate.mutate()}
+        canControl={canRecalculate}
+        cancelling={cancel.isPending}
+        retrying={retry.isPending}
+        controlError={cancel.error || retry.error}
+        onCancel={() => cancel.mutate()}
+        onRetry={() => retry.mutate()}
+      />
       {run.data.status === "succeeded" ? (
         <>
           <section className={styles.reportHeading}><div className={styles.kicker}>{t("evaluationRuns:kicker")}</div><h2>{t("evaluationRuns:reportTitle")}</h2><p>{t("evaluationRuns:reportSubtitle")}</p></section>

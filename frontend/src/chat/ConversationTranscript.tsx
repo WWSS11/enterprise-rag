@@ -1,3 +1,4 @@
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
@@ -5,6 +6,11 @@ import { citationSchema, type ChatMessage } from "@/api/types";
 import { Button } from "@/components/Button";
 import { formatDateTime } from "@/i18n/format";
 import type { AppLocale } from "@/i18n";
+import {
+  DocumentPreviewDialog,
+  type DocumentPreviewTarget,
+} from "@/documents/DocumentPreviewDialog";
+import { sourceLocationLabel } from "@/documents/sourceLocation";
 import styles from "./ConversationTranscript.module.css";
 
 type ConversationTranscriptProps = {
@@ -22,8 +28,9 @@ export function ConversationTranscript({
   error,
   onLoadEarlier,
 }: ConversationTranscriptProps) {
-  const { t, i18n } = useTranslation("chat");
+  const { t, i18n } = useTranslation(["chat", "documents"]);
   const locale = (i18n.resolvedLanguage ?? "zh-CN") as AppLocale;
+  const [previewTarget, setPreviewTarget] = useState<DocumentPreviewTarget | null>(null);
 
   if (!messages.length && !loading && !error) return null;
 
@@ -71,7 +78,19 @@ export function ConversationTranscript({
                       <li key={`${message.id}-${citation.chunk_id}-${index}`}>
                         <strong>{citation.document_name}</strong>
                         <code>{citation.chunk_id}</code>
+                        <span>{sourceLocationLabel(citation.location, t)}</span>
                         {citation.content_preview ? <p>{citation.content_preview}</p> : null}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setPreviewTarget({
+                            documentId: citation.document_id,
+                            documentName: citation.document_name,
+                            chunkId: citation.chunk_id,
+                          })}
+                        >
+                          {t("documents:preview")}
+                        </Button>
                       </li>
                     ))}
                   </ol>
@@ -81,6 +100,12 @@ export function ConversationTranscript({
           );
         })}
       </ol>
+      {previewTarget ? (
+        <DocumentPreviewDialog
+          target={previewTarget}
+          onClose={() => setPreviewTarget(null)}
+        />
+      ) : null}
     </section>
   );
 }

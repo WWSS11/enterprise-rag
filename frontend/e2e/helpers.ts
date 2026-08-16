@@ -70,6 +70,11 @@ export function attachConsoleGuard(page: Page): ConsoleGuard {
 export async function clearBrowserAuth(page: Page): Promise<void> {
   await page.context().clearCookies();
   await page.goto("/login");
+  // Firefox reports aborted lazy imports as errors if the next navigation
+  // starts before the login route has finished bootstrapping.
+  await page
+    .getByRole("button", { name: /使用企业账号登录|Continue with SSO/i })
+    .waitFor({ state: "visible" });
   await page.evaluate(() => {
     window.sessionStorage.clear();
     window.localStorage.clear();
@@ -186,16 +191,28 @@ export async function seedMockAuthenticatedSession(page: Page): Promise<void> {
 }
 
 export async function assertNoAccessTokenInLocalStorage(page: Page): Promise<void> {
-  const found = await page.evaluate(() => {
-    for (let i = 0; i < window.localStorage.length; i += 1) {
-      const key = window.localStorage.key(i) ?? "";
-      const value = window.localStorage.getItem(key) ?? "";
-      if (/access_token|id_token|refresh_token/i.test(key)) return true;
-      if (/access_token|id_token|refresh_token|eyJ[A-Za-z0-9\-_]+\./i.test(value)) return true;
-    }
-    return false;
-  });
-  expect(found, "Access/id/refresh tokens must not live in localStorage").toBe(false);
+  await expect
+    .poll(
+      async () => {
+        try {
+          return await page.evaluate(() => {
+            for (let i = 0; i < window.localStorage.length; i += 1) {
+              const key = window.localStorage.key(i) ?? "";
+              const value = window.localStorage.getItem(key) ?? "";
+              if (/access_token|id_token|refresh_token/i.test(key)) return true;
+              if (/access_token|id_token|refresh_token|eyJ[A-Za-z0-9\-_]+\./i.test(value)) {
+                return true;
+              }
+            }
+            return false;
+          });
+        } catch {
+          return null;
+        }
+      },
+      { message: "Access/id/refresh tokens must not live in localStorage" },
+    )
+    .toBe(false);
 }
 
 export async function assertSessionStorageHasOidcUser(page: Page): Promise<void> {
@@ -207,6 +224,26 @@ export async function assertSessionStorageHasOidcUser(page: Page): Promise<void>
     return false;
   });
   expect(hasUser, "OIDC user session should be in sessionStorage").toBe(true);
+}
+
+export async function accessTokenFromSessionStorage(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index) ?? "";
+      if (!key.startsWith("oidc.user:")) continue;
+      try {
+        const value = JSON.parse(window.sessionStorage.getItem(key) ?? "null") as {
+          access_token?: unknown;
+        } | null;
+        if (typeof value?.access_token === "string" && value.access_token) {
+          return value.access_token;
+        }
+      } catch {
+        // Ignore malformed unrelated session entries.
+      }
+    }
+    return null;
+  });
 }
 
 export async function logoutFromShell(page: Page): Promise<void> {

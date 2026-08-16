@@ -2,8 +2,8 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd)
 COMPOSE_FILE="$PROJECT_ROOT/infra/compose.yml"
 INFRA_ENV="$PROJECT_ROOT/infra/.env"
 ROOT_ENV="$PROJECT_ROOT/.env"
@@ -43,6 +43,7 @@ die() {
 
 ensure_runtime_dirs() {
     mkdir -p "$PID_DIR" "$LOG_DIR" "$BACKUP_DIR"
+    chmod 700 "$RUNTIME_DIR" "$PID_DIR" "$LOG_DIR" "$BACKUP_DIR"
 }
 
 prepare_writable_cache() {
@@ -50,8 +51,16 @@ prepare_writable_cache() {
     cache_dir="$PROJECT_ROOT/$cache_name"
     [ -d "$cache_dir" ] || return 0
     if find "$cache_dir" ! -writable -print -quit | grep -q .; then
+        ensure_runtime_dirs
         stamp=$(date '+%Y%m%d-%H%M%S')
-        backup="$PROJECT_ROOT/.root-owned-backup-$stamp-$$${cache_name}"
+        if [ -w "$cache_dir" ]; then
+            backup="$BACKUP_DIR/root-owned-${cache_name#.}-$stamp-$$"
+        else
+            # Moving a root-owned directory across parents can fail because
+            # rename(2) must update its '..' entry. Keep the rare fallback in
+            # place under a gitignored name.
+            backup="$PROJECT_ROOT/.root-owned-backup-$stamp-$$${cache_name}"
+        fi
         mv "$cache_dir" "$backup"
         mkdir -p "$cache_dir"
         warn "$cache_name 包含不可写文件，已保留到 $backup"
@@ -70,6 +79,7 @@ copy_env_if_missing() {
         cp "$example" "$target"
         info "已创建 ${target#"$PROJECT_ROOT/"}"
     fi
+    chmod 600 "$target"
 }
 
 ensure_env_files() {
@@ -79,11 +89,10 @@ ensure_env_files() {
 }
 
 sync_local_env() {
-    require_command python3
+    valid_venv_python || die "同步本地配置需要 Python 3.13 虚拟环境，请先运行 bootstrap"
     ensure_runtime_dirs
     ensure_env_files
-
-    python3 - "$ROOT_ENV" "$INFRA_ENV" "$BACKUP_DIR" <<'PY'
+    "$VENV_PYTHON" - "$ROOT_ENV" "$INFRA_ENV" "$BACKUP_DIR" <<'PY'
 from __future__ import annotations
 
 import shutil
@@ -130,53 +139,59 @@ updates = {
     "APP_MILVUS_URI": "http://127.0.0.1:19530",
 }
 
-lines = root_path.read_text(encoding="utf-8").splitlines()
-seen: set[str] = set()
 changed = False
-for index, raw in enumerate(lines):
+lines = root_path.read_text(encoding="utf-8").splitlines()
+remaining = dict(updates)
+merged: list[str] = []
+for raw in lines:
     if "=" not in raw or raw.lstrip().startswith("#"):
+        merged.append(raw)
         continue
     key = raw.split("=", 1)[0].strip()
-    if key not in updates:
+    if key not in remaining:
+        merged.append(raw)
         continue
-    seen.add(key)
-    replacement = f"{key}={updates[key]}"
-    if raw != replacement:
-        lines[index] = replacement
-        changed = True
+    value = remaining.pop(key)
+    replacement = f"{key}={value}"
+    merged.append(replacement)
+    changed = changed or replacement != raw
 
-for key, value in updates.items():
-    if key not in seen:
-        lines.append(f"{key}={value}")
-        changed = True
+if remaining:
+    if merged and merged[-1]:
+        merged.append("")
+    merged.extend(f"{key}={value}" for key, value in remaining.items())
+    changed = True
 
 if changed:
-    backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    backup = backup_dir / f"env-{stamp}.bak"
+    backup = backup_dir / f"env-before-infra-sync-{stamp}.bak"
     shutil.copy2(root_path, backup)
-    root_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"已同步本地中间件连接配置；原配置备份到 {backup}")
-else:
-    print("本地中间件连接配置已一致")
+    backup.chmod(0o600)
+    root_path.write_text("\n".join(merged).rstrip("\n") + "\n", encoding="utf-8")
+    root_path.chmod(0o600)
+
+print("已同步本地中间件连接到 .env" if changed else "本地 .env 中间件连接已一致")
 PY
+    chmod 600 "$ROOT_ENV" "$INFRA_ENV" "$FRONTEND_ENV"
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'env-*.bak' -exec chmod 600 {} +
 }
 
 install_arch_prerequisites() {
-    missing=""
-    command -v docker >/dev/null 2>&1 || missing="$missing docker"
-    docker compose version >/dev/null 2>&1 || missing="$missing docker-compose"
-    command -v node >/dev/null 2>&1 || missing="$missing nodejs"
-    command -v npm >/dev/null 2>&1 || missing="$missing npm"
-    command -v uv >/dev/null 2>&1 || missing="$missing uv"
+    set --
+    command -v docker >/dev/null 2>&1 || set -- "$@" docker
+    docker compose version >/dev/null 2>&1 || set -- "$@" docker-compose
+    command -v node >/dev/null 2>&1 || set -- "$@" nodejs
+    command -v npm >/dev/null 2>&1 || set -- "$@" npm
+    command -v uv >/dev/null 2>&1 || set -- "$@" uv
+    command -v curl >/dev/null 2>&1 || set -- "$@" curl
 
-    [ -z "$missing" ] && return 0
+    [ "$#" -eq 0 ] && return 0
     command -v pacman >/dev/null 2>&1 || {
-        die "缺少依赖：$missing。请先安装后重新运行。"
+        die "缺少依赖：$*。请先安装后重新运行。"
     }
     require_command sudo
-    info "将通过 pacman 安装：$missing"
-    sudo pacman -S --needed $missing
+    info "将通过 pacman 安装：$*"
+    sudo pacman -S --needed "$@"
 }
 
 check_node_version() {
@@ -260,8 +275,8 @@ bootstrap() {
     prepare_writable_cache ".pytest_cache"
     ensure_env_files
     install_arch_prerequisites
-    sync_local_env
     create_venv
+    sync_local_env
     install_backend
     install_frontend
     info "开发环境初始化完成（Python：$($VENV_PYTHON --version 2>&1)，Node：$(node --version)）"
@@ -312,10 +327,10 @@ prepare_keycloak_volume() {
 
 infra_up() {
     ensure_docker
-    sync_local_env
+    ensure_env_files
     prepare_keycloak=0
     if [ "$#" -eq 0 ]; then
-        set -- $INFRA_SERVICES
+        set -- postgres redis etcd minio milvus keycloak
     else
         for service in "$@"; do
             assert_service_name "$service"
@@ -371,6 +386,7 @@ start_process() {
     workdir=$2
     shift 2
     ensure_runtime_dirs
+    PROCESS_WAS_STARTED=0
 
     if running_pid "$name"; then
         pid=$(sed -n '1p' "$PID_DIR/$name.pid")
@@ -388,8 +404,10 @@ start_process() {
     if ! running_pid "$name"; then
         warn "$name 启动失败，最近错误日志："
         tail -n 30 "$LOG_DIR/$name.err.log" >&2 || true
+        rm -f "$PID_DIR/$name.pid"
         return 1
     fi
+    PROCESS_WAS_STARTED=1
     pid=$(sed -n '1p' "$PID_DIR/$name.pid")
     info "$name 已启动（PID $pid）"
 }
@@ -419,9 +437,9 @@ stop_process() {
 }
 
 require_initialized() {
-    valid_venv_python || die "Linux Python 3.13 虚拟环境未初始化，请先选择“初始化开发环境”"
+    valid_venv_python || die "Linux Python 3.13 虚拟环境未初始化，请先选择'初始化开发环境'"
     [ -d "$PROJECT_ROOT/frontend/node_modules" ] || {
-        die "前端依赖未初始化，请先选择“初始化开发环境”"
+        die "前端依赖未初始化，请先选择'初始化开发环境'"
     }
     ensure_env_files
 }
@@ -431,17 +449,115 @@ run_migrations() {
     (cd "$PROJECT_ROOT" && "$VENV_PYTHON" -m alembic upgrade head)
 }
 
+wait_http_ready() {
+    label=$1
+    url=$2
+    timeout_seconds=$3
+    process_name=$4
+    deadline=$(($(date +%s) + timeout_seconds))
+
+    info "等待 $label 就绪：$url"
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if ! running_pid "$process_name"; then
+            warn "$label 进程已退出"
+            tail -n 30 "$LOG_DIR/$process_name.err.log" >&2 || true
+            return 1
+        fi
+        if curl --fail --silent --max-time 2 "$url" >/dev/null 2>&1; then
+            info "$label 已就绪"
+            return 0
+        fi
+        sleep 1
+    done
+
+    warn "$label 在 ${timeout_seconds}s 内未就绪"
+    tail -n 30 "$LOG_DIR/$process_name.err.log" >&2 || true
+    return 1
+}
+
+wait_worker_ready() {
+    timeout_seconds=$1
+    deadline=$(($(date +%s) + timeout_seconds))
+
+    info "等待 Celery Worker 连接 Redis"
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if ! running_pid worker; then
+            warn "Celery Worker 进程已退出"
+            tail -n 30 "$LOG_DIR/worker.err.log" >&2 || true
+            return 1
+        fi
+        reply=$(cd "$PROJECT_ROOT" && "$VENV_PYTHON" -m celery \
+            -A app.workers.celery_app:celery_app inspect ping --timeout=2 2>/dev/null || true)
+        case "$reply" in
+            *pong*) info "Celery Worker 已就绪"; return 0 ;;
+        esac
+        sleep 1
+    done
+
+    warn "Celery Worker 在 ${timeout_seconds}s 内未就绪"
+    tail -n 30 "$LOG_DIR/worker.err.log" >&2 || true
+    return 1
+}
+
+rollback_started_app() {
+    started_api=$1
+    started_worker=$2
+    started_frontend=$3
+    [ "$started_api" -eq 0 ] && [ "$started_worker" -eq 0 ] && \
+        [ "$started_frontend" -eq 0 ] && return 0
+
+    warn "应用启动失败，回滚本次新启动的进程"
+    [ "$started_frontend" -eq 0 ] || stop_process frontend
+    [ "$started_worker" -eq 0 ] || stop_process worker
+    [ "$started_api" -eq 0 ] || stop_process api
+}
+
 start_app() {
     require_initialized
+    require_command curl
     sync_local_env
     run_migrations
-    start_process api "$PROJECT_ROOT" \
-        "$VENV_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-    start_process worker "$PROJECT_ROOT" \
+    started_api=0
+    started_worker=0
+    started_frontend=0
+
+    if start_process api "$PROJECT_ROOT" \
+        "$VENV_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload; then
+        started_api=$PROCESS_WAS_STARTED
+    else
+        rollback_started_app "$started_api" "$started_worker" "$started_frontend"
+        return 1
+    fi
+    if ! wait_http_ready "API" "http://127.0.0.1:8000/health/ready" 90 api; then
+        rollback_started_app "$started_api" "$started_worker" "$started_frontend"
+        return 1
+    fi
+
+    if start_process worker "$PROJECT_ROOT" \
         "$VENV_PYTHON" -m celery -A app.workers.celery_app:celery_app worker \
-        --loglevel=INFO --pool=prefork --concurrency=2
-    start_process frontend "$PROJECT_ROOT/frontend" npm run dev
-    info "前后端已启动：Web http://localhost:3000 ｜ API http://127.0.0.1:8000/docs"
+        --loglevel=INFO --pool=prefork --concurrency=2; then
+        started_worker=$PROCESS_WAS_STARTED
+    else
+        rollback_started_app "$started_api" "$started_worker" "$started_frontend"
+        return 1
+    fi
+    if ! wait_worker_ready 30; then
+        rollback_started_app "$started_api" "$started_worker" "$started_frontend"
+        return 1
+    fi
+
+    if start_process frontend "$PROJECT_ROOT/frontend" npm run dev; then
+        started_frontend=$PROCESS_WAS_STARTED
+    else
+        rollback_started_app "$started_api" "$started_worker" "$started_frontend"
+        return 1
+    fi
+    if ! wait_http_ready "前端" "http://127.0.0.1:3000" 90 frontend; then
+        rollback_started_app "$started_api" "$started_worker" "$started_frontend"
+        return 1
+    fi
+
+    info "开发服务已启动（不含 Beat）：Web http://localhost:3000 ｜ API http://127.0.0.1:8000/docs"
 }
 
 start_all() {
@@ -490,7 +606,11 @@ status_all() {
     app_status_line beat
     app_status_line frontend
     printf '\nDocker 组件：\n'
-    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if ! command -v docker >/dev/null 2>&1; then
+        printf '  Docker CLI 未安装\n'
+    elif ! docker compose version >/dev/null 2>&1; then
+        printf '  Docker Compose v2 插件未安装\n'
+    elif docker info >/dev/null 2>&1; then
         compose ps
     else
         printf '  Docker daemon 未运行\n'
@@ -512,11 +632,11 @@ dev_check() {
     require_initialized
     require_command curl
     failed=0
-    check_url "API 存活检查" "http://127.0.0.1:8000/health/live" || failed=1
+    check_url "API 就绪检查" "http://127.0.0.1:8000/health/ready" || failed=1
     check_url "Keycloak OIDC" \
         "http://127.0.0.1:18080/realms/enterprise-rag/.well-known/openid-configuration" \
         || failed=1
-    (cd "$PROJECT_ROOT" && "$VENV_PYTHON" -m alembic current) || failed=1
+    (cd "$PROJECT_ROOT" && "$VENV_PYTHON" -m alembic current --check-heads) || failed=1
     (cd "$PROJECT_ROOT" && "$VENV_PYTHON" -c \
         "import asyncio; from app.services.milvus_service import milvus_service; print('milvus:', asyncio.run(milvus_service.ping()))") \
         || failed=1
@@ -582,7 +702,7 @@ menu() {
     while :; do
         printf '\nEnterprise RAG · Arch Linux 开发环境\n'
         printf '  1) 初始化/更新开发环境\n'
-        printf '  2) 一键启动完整开发环境\n'
+        printf '  2) 启动 Docker、API、Worker 和前端（不含 Beat）\n'
         printf '  3) 一键启动前后端（不启动 Docker）\n'
         printf '  4) 启动全部 Docker 组件\n'
         printf '  5) 选择 Docker 组件启动\n'
@@ -619,7 +739,7 @@ usage() {
 
 不带参数时打开交互菜单。可用命令：
   bootstrap                 初始化/更新开发环境
-  start                     启动全部 Docker 组件和前后端
+  start                     启动 Docker、API、Worker 和前端（不含 Beat）
   start-app                 启动 API、Worker 和前端
   start-beat                启动 Celery Beat
   infra-up [服务...]        启动全部或指定 Docker 组件

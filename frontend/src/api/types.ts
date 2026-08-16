@@ -54,15 +54,29 @@ export const knowledgeBaseUpdateSchema = z.object({
 });
 export type KnowledgeBaseUpdate = z.infer<typeof knowledgeBaseUpdateSchema>;
 
-export const knowledgeBaseMemberUpsertSchema = z.object({
-  principal_type: z.enum(["user", "group"]),
-  principal_id: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/),
-  permission: z.enum(["reader", "editor", "owner"]),
-});
+export const knowledgeBaseMemberUpsertSchema = z
+  .object({
+    principal_type: z.enum(["user", "group"]),
+    principal_id: z.string().min(1).max(128),
+    permission: z.enum(["reader", "editor", "owner"]),
+  })
+  .superRefine((value, context) => {
+    const hasControlCharacter = Array.from(value.principal_id).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127;
+    });
+    const valid = value.principal_type === "user"
+      ? /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(value.principal_id)
+      : value.principal_id.trim() === value.principal_id
+        && !hasControlCharacter;
+    if (!valid) {
+      context.addIssue({
+        code: "custom",
+        path: ["principal_id"],
+        message: "invalid directory principal identifier",
+      });
+    }
+  });
 export type KnowledgeBaseMemberUpsert = z.infer<typeof knowledgeBaseMemberUpsertSchema>;
 
 export const knowledgeBaseMemberSchema = z.object({
@@ -76,6 +90,15 @@ export const knowledgeBaseMemberSchema = z.object({
 });
 export type KnowledgeBaseMember = z.infer<typeof knowledgeBaseMemberSchema>;
 export const knowledgeBaseMemberListSchema = z.array(knowledgeBaseMemberSchema);
+
+export const directoryPrincipalSchema = z.object({
+  principal_type: z.enum(["user", "group"]),
+  principal_id: z.string().min(1).max(128),
+  display_name: z.string().min(1).max(255),
+  secondary_text: z.string().max(512).nullable(),
+});
+export const directoryPrincipalListSchema = z.array(directoryPrincipalSchema);
+export type DirectoryPrincipal = z.infer<typeof directoryPrincipalSchema>;
 
 export const knowledgeBasePermissionSchema = z.object({
   knowledge_base_id: z.string().uuid(),
@@ -101,7 +124,7 @@ export const documentSchema = z.object({
   name: z.string(),
   source_type: z.string(),
   source_key: z.string().nullable(),
-  source_uri: z.string().nullable(),
+  source_available: z.boolean(),
   source_updated_at: apiDateTimeSchema.nullable(),
   content_type: z.string().nullable(),
   size_bytes: z.number().int().nonnegative(),
@@ -117,18 +140,63 @@ export const documentSchema = z.object({
 export const documentListSchema = z.array(documentSchema);
 export type DocumentRecord = z.infer<typeof documentSchema>;
 
-export const jobStatusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
+export const sourceLocationSchema = z.object({
+  kind: z.enum(["page", "slide", "paragraph", "cell_range", "section"]),
+  page: z.number().int().positive().nullable(),
+  slide: z.number().int().positive().nullable(),
+  paragraph_start: z.number().int().positive().nullable(),
+  paragraph_end: z.number().int().positive().nullable(),
+  sheet: z.string().nullable(),
+  table: z.string().nullable(),
+  cell_range: z.string().nullable(),
+  section_index: z.number().int().nonnegative().nullable(),
+  heading_path: z.array(z.string()),
+});
+export type SourceLocation = z.infer<typeof sourceLocationSchema>;
+
+export const documentPreviewSectionSchema = z.object({
+  section_index: z.number().int().nonnegative(),
+  title: z.string().nullable(),
+  heading_path: z.array(z.string()),
+  content: z.string(),
+  location: sourceLocationSchema.nullable(),
+  is_target: z.boolean(),
+});
+
+export const documentPreviewSchema = z.object({
+  document_id: z.string().uuid(),
+  name: z.string(),
+  content_type: z.string().nullable(),
+  source_type: z.string(),
+  target_chunk_id: z.string().uuid().nullable(),
+  target_location: sourceLocationSchema.nullable(),
+  sections: z.array(documentPreviewSectionSchema),
+  truncated: z.boolean(),
+  download_available: z.boolean(),
+});
+export type DocumentPreview = z.infer<typeof documentPreviewSchema>;
+
+export const jobStatusSchema = z.enum([
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
 
 export const jobSchema = z.object({
   id: z.string().uuid(),
   knowledge_base_id: z.string().uuid().nullish().transform((value) => value ?? null),
   document_id: z.string().uuid().nullable(),
+  retry_of_job_id: z.string().uuid().nullish().transform((value) => value ?? null),
   task_id: z.string().nullable(),
   job_type: z.string(),
   status: jobStatusSchema,
   progress: z.number().int().min(0).max(100),
   result: z.record(z.string(), z.unknown()),
   error_message: z.string().nullable(),
+  cancelled_at: apiDateTimeSchema.nullish().transform((value) => value ?? null),
+  cancelled_by: z.string().nullish().transform((value) => value ?? null),
   created_at: apiDateTimeSchema,
   updated_at: apiDateTimeSchema,
 });
@@ -140,6 +208,41 @@ export const jobPageSchema = z.object({
   offset: z.number().int().nonnegative(),
 });
 export type JobPage = z.infer<typeof jobPageSchema>;
+
+export const connectorCheckSchema = z.object({
+  key: z.string(),
+  status: z.enum(["passed", "failed", "warning", "skipped"]),
+  message: z.string(),
+  error_code: z.number().int().nullable(),
+  log_id: z.string().nullable(),
+  details: z.record(z.string(), z.unknown()),
+});
+export type ConnectorCheck = z.infer<typeof connectorCheckSchema>;
+
+export const feishuConnectorStatusSchema = z.object({
+  provider: z.literal("feishu"),
+  enabled: z.boolean(),
+  ready: z.boolean(),
+  tenant_id: z.string(),
+  space_id: z.string().nullable(),
+  run_as_user: z.string(),
+  app_id_configured: z.boolean(),
+  app_secret_configured: z.boolean(),
+  knowledge_base_id: z.string().uuid().nullable(),
+  knowledge_base_name: z.string().nullable(),
+  checks: z.array(connectorCheckSchema),
+  active_job: jobSchema.nullable(),
+  latest_job: jobSchema.nullable(),
+});
+export type FeishuConnectorStatus = z.infer<typeof feishuConnectorStatusSchema>;
+
+export const feishuDiagnosticSchema = z.object({
+  provider: z.literal("feishu"),
+  status: z.enum(["passed", "failed"]),
+  checked_at: apiDateTimeSchema,
+  checks: z.array(connectorCheckSchema),
+});
+export type FeishuDiagnostic = z.infer<typeof feishuDiagnosticSchema>;
 
 export const documentUploadAcceptedSchema = z.object({
   document: documentSchema,
@@ -160,6 +263,7 @@ export const citationSchema = z.object({
   chunk_id: z.string(),
   score: z.number(),
   content_preview: z.string(),
+  location: sourceLocationSchema.nullable().optional(),
 });
 export type Citation = z.infer<typeof citationSchema>;
 
@@ -176,6 +280,12 @@ export const evaluationDatasetCreateSchema = z.object({
   description: z.string().max(4000).nullable().optional(),
 });
 export type EvaluationDatasetCreate = z.infer<typeof evaluationDatasetCreateSchema>;
+
+export const evaluationDatasetUpdateSchema = evaluationDatasetCreateSchema.omit({
+  knowledge_base_id: true,
+});
+export type EvaluationDatasetUpdate = z.infer<typeof evaluationDatasetUpdateSchema>;
+export type EvaluationDatasetCopy = EvaluationDatasetUpdate;
 
 export const evaluationDatasetSchema = z.object({
   id: z.string().uuid(),
@@ -200,6 +310,34 @@ export const evaluationCaseCreateSchema = z.object({
   required_key_point_groups: z.array(z.array(z.string()).max(20)).max(100).optional(),
   should_refuse: z.boolean().optional(),
   tags: z.array(z.string()).max(50).optional(),
+}).superRefine((value, context) => {
+  const expected = value.expected_document_ids ?? [];
+  const acceptable = value.acceptable_citation_document_ids ?? [];
+  if (value.should_refuse && (expected.length > 0 || acceptable.length > 0)) {
+    context.addIssue({
+      code: "custom",
+      path: ["expected_document_ids"],
+      message: "refusal cases cannot declare expected or citation documents",
+    });
+  }
+  if (!value.should_refuse && expected.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["expected_document_ids"],
+      message: "answerable cases require at least one expected document",
+    });
+  }
+  const required = value.required_key_points ?? [];
+  for (const [index, group] of (value.required_key_point_groups ?? []).entries()) {
+    const anchors = required.filter((point) => group.includes(point));
+    if (anchors.length !== 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["required_key_point_groups", index],
+        message: "each key point group must contain exactly one required key point",
+      });
+    }
+  }
 });
 export type EvaluationCaseCreate = z.infer<typeof evaluationCaseCreateSchema>;
 
@@ -243,6 +381,7 @@ export const evaluationRunSchema = z.object({
   tenant_id: z.string(),
   knowledge_base_id: z.string().uuid(),
   dataset_id: z.string().uuid(),
+  retry_of_run_id: z.string().uuid().nullish().transform((value) => value ?? null),
   created_by: z.string(),
   task_id: z.string().nullable(),
   status: z.string(),
@@ -255,6 +394,8 @@ export const evaluationRunSchema = z.object({
   started_at: apiDateTimeSchema.nullable(),
   completed_at: apiDateTimeSchema.nullable(),
   error_message: z.string().nullable(),
+  cancelled_at: apiDateTimeSchema.nullish().transform((value) => value ?? null),
+  cancelled_by: z.string().nullish().transform((value) => value ?? null),
   created_at: apiDateTimeSchema,
   updated_at: apiDateTimeSchema,
 });

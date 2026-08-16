@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 
 def portable_source_uri(path: Path, project_root: Path | None = None) -> str:
@@ -23,6 +23,8 @@ def resolve_source_uri(source_uri: str, project_root: Path | None = None) -> Pat
         return (root / Path(normalized.removeprefix("/app/"))).resolve()
 
     direct = Path(source_uri)
+    if PureWindowsPath(source_uri).is_absolute() and not direct.is_absolute():
+        return direct
     if not direct.is_absolute():
         return (root / direct).resolve()
     if direct.is_file():

@@ -40,6 +40,7 @@ function evaluationRun(
     tenant_id: "default",
     knowledge_base_id: knowledgeBaseId,
     dataset_id: datasetId,
+    retry_of_run_id: null,
     created_by: "qa-user",
     task_id: "task-evaluation-1",
     status: "succeeded",
@@ -52,6 +53,8 @@ function evaluationRun(
     started_at: timestamp,
     completed_at: timestamp,
     error_message: null,
+    cancelled_at: null,
+    cancelled_by: null,
     created_at: timestamp,
     updated_at: timestamp,
     ...overrides,
@@ -314,6 +317,81 @@ describe("Evaluation components", () => {
     expect(screen.getByRole("progressbar")).toHaveAttribute("value", "75");
     expect(screen.getByText("已处理 3 / 4，失败 0")).toBeVisible();
     expect(screen.queryByRole("button", { name: "重算指标" })).not.toBeInTheDocument();
+  });
+
+  it("offers safe queued cancellation but never force-cancels a running evaluation", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const { rerender } = renderEvaluation(
+      <EvaluationRunPanel
+        run={evaluationRun(candidateRunId, {
+          status: "queued",
+          progress: 0,
+          completed_cases: 0,
+          started_at: null,
+          completed_at: null,
+        })}
+        visible
+        canRecalculate={false}
+        recalculating={false}
+        onRecalculate={vi.fn()}
+        canControl
+        onCancel={onCancel}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "取消排队运行" }));
+    expect(onCancel).toHaveBeenCalledOnce();
+
+    rerender(
+      <EvaluationRunPanel
+        run={evaluationRun(candidateRunId, {
+          status: "running",
+          progress: 50,
+          completed_cases: 1,
+          completed_at: null,
+        })}
+        visible
+        canRecalculate={false}
+        recalculating={false}
+        onRecalculate={vi.fn()}
+        canControl
+        onCancel={onCancel}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "取消排队运行" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("运行已经开始；为保留逐用例结果一致性，不执行强制终止。"),
+    ).toBeVisible();
+  });
+
+  it("shows cancellation lineage and allows a linked evaluation retry", async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    renderEvaluation(
+      <EvaluationRunPanel
+        run={evaluationRun(candidateRunId, {
+          status: "cancelled",
+          progress: 0,
+          completed_cases: 0,
+          retry_of_run_id: baselineRunId,
+          cancelled_at: timestamp,
+          cancelled_by: "operator-a",
+        })}
+        visible
+        canRecalculate={false}
+        recalculating={false}
+        onRecalculate={vi.fn()}
+        canControl
+        onRetry={onRetry}
+      />,
+    );
+
+    expect(screen.getByText("已取消")).toBeVisible();
+    expect(screen.getByText("取消操作者：operator-a")).toBeVisible();
+    expect(screen.getByText(baselineRunId)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "重试运行" }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 
   it("classifies comparison metrics and preserves comparison, baseline, and threshold state across locale changes", async () => {

@@ -1,4 +1,4 @@
-import { useId, useRef } from "react";
+import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Citation } from "@/api/types";
 import type { ChatStreamMetadata } from "@/chat/streamEvents";
@@ -6,6 +6,11 @@ import { Button } from "@/components/Button";
 import { IconClose } from "@/components/icons";
 import { useBodyScrollLock, useFocusTrap } from "@/hooks/useFocusTrap";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import {
+  DocumentPreviewDialog,
+  type DocumentPreviewTarget,
+} from "@/documents/DocumentPreviewDialog";
+import { sourceLocationLabel } from "@/documents/sourceLocation";
 import styles from "./EvidenceDesk.module.css";
 
 type EvidenceOutcome = "pending" | "grounded" | "no_evidence" | "empty";
@@ -26,11 +31,12 @@ function EvidenceList({
   outcome,
   activeCitation,
   onCitationSelect,
+  onPreview,
 }: Pick<
   EvidenceDeskProps,
   "citations" | "outcome" | "activeCitation" | "onCitationSelect"
->) {
-  const { t, i18n } = useTranslation("evidence");
+> & { onPreview: (target: DocumentPreviewTarget) => void }) {
+  const { t, i18n } = useTranslation(["evidence", "documents"]);
   const formatter = new Intl.NumberFormat(i18n.language, {
     style: "percent",
     maximumFractionDigits: 1,
@@ -71,9 +77,24 @@ function EvidenceList({
                     <span>{formatter.format(citation.score)}</span>
                   </span>
                   <span className={styles.preview}>{citation.content_preview}</span>
+                  <span className={styles.sourceLocation}>
+                    {sourceLocationLabel(citation.location, t)}
+                  </span>
                   <span className={styles.locate}>{t("locateInAnswer")}</span>
                 </span>
               </button>
+              <Button
+                type="button"
+                variant="ghost"
+                className={styles.previewAction}
+                onClick={() => onPreview({
+                  documentId: citation.document_id,
+                  documentName: citation.document_name,
+                  chunkId: citation.chunk_id,
+                })}
+              >
+                {t("documents:preview")}
+              </Button>
             </article>
           </li>
         );
@@ -135,9 +156,15 @@ export function EvidenceDesk({
   const titleId = useId();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [previewTarget, setPreviewTarget] = useState<DocumentPreviewTarget | null>(null);
 
   useFocusTrap(mobile && open, drawerRef, closeRef);
   useBodyScrollLock(mobile && open);
+
+  const previewCitation = (target: DocumentPreviewTarget) => {
+    if (mobile) onOpenChange(false);
+    setPreviewTarget(target);
+  };
 
   if (presentation === "desktop") {
     if (mobile) return null;
@@ -156,7 +183,14 @@ export function EvidenceDesk({
           outcome={outcome}
           activeCitation={activeCitation}
           onCitationSelect={onCitationSelect}
+          onPreview={previewCitation}
         />
+        {previewTarget ? (
+          <DocumentPreviewDialog
+            target={previewTarget}
+            onClose={() => setPreviewTarget(null)}
+          />
+        ) : null}
       </aside>
     );
   }
@@ -212,9 +246,16 @@ export function EvidenceDesk({
               outcome={outcome}
               activeCitation={activeCitation}
               onCitationSelect={handleMobileCitation}
+              onPreview={previewCitation}
             />
           </div>
         </>
+      ) : null}
+      {previewTarget ? (
+        <DocumentPreviewDialog
+          target={previewTarget}
+          onClose={() => setPreviewTarget(null)}
+        />
       ) : null}
     </>
   );

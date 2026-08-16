@@ -9,6 +9,8 @@ import {
 
 const kbId = "11111111-1111-4111-8111-111111111111";
 const conversationId = "22222222-2222-4222-8222-222222222222";
+const citedDocumentId = "33333333-3333-4333-8333-333333333333";
+const citedChunkId = "44444444-4444-4444-8444-444444444444";
 
 const sse = [
   `event: metadata\ndata: {"conversation_id":"${conversationId}"}\n\n`,
@@ -17,17 +19,29 @@ const sse = [
   'event: stage\ndata: {"name":"rerank","status":"completed"}\n\n',
   'event: stage\ndata: {"name":"expand_context","status":"completed"}\n\n',
   'event: token\ndata: {"token":"根据制度，访问需要审批 "}\n\n',
-  'event: token\ndata: {"token":"[来源:安全制度.md#chunk-7]"}\n\n',
+  `event: token\ndata: {"token":"[来源:安全制度.md#${citedChunkId}]"}\n\n`,
   `event: metadata\ndata: ${JSON.stringify({
     conversation_id: conversationId,
     rewritten_query: "访问审批制度",
     citations: [
       {
-        document_id: "doc-1",
+        document_id: citedDocumentId,
         document_name: "安全制度.md",
-        chunk_id: "chunk-7",
+        chunk_id: citedChunkId,
         score: 0.93,
         content_preview: "所有受限访问必须由知识库负责人审批。",
+        location: {
+          kind: "paragraph",
+          page: null,
+          slide: null,
+          paragraph_start: 7,
+          paragraph_end: 8,
+          sheet: null,
+          table: null,
+          cell_range: null,
+          section_index: 3,
+          heading_path: ["访问审批"],
+        },
       },
     ],
     retrieved_count: 12,
@@ -99,6 +113,58 @@ test.describe("Chat + Evidence Desk mocked SSE", () => {
         body: sse,
       });
     });
+    await page.route(
+      `**/api/v1/documents/${citedDocumentId}/preview?chunk_id=${citedChunkId}`,
+      async (route) => {
+        expect(route.request().headers().authorization).toBe("Bearer mock-access-token-for-e2e");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            document_id: citedDocumentId,
+            name: "安全制度.md",
+            content_type: "text/markdown",
+            source_type: "upload",
+            target_chunk_id: citedChunkId,
+            target_location: {
+              kind: "paragraph",
+              page: null,
+              slide: null,
+              paragraph_start: 7,
+              paragraph_end: 8,
+              sheet: null,
+              table: null,
+              cell_range: null,
+              section_index: 3,
+              heading_path: ["访问审批"],
+            },
+            sections: [
+              {
+                section_index: 3,
+                title: "访问审批",
+                heading_path: ["访问审批"],
+                content: "所有受限访问必须由知识库负责人审批。",
+                location: {
+                  kind: "paragraph",
+                  page: null,
+                  slide: null,
+                  paragraph_start: 7,
+                  paragraph_end: 8,
+                  sheet: null,
+                  table: null,
+                  cell_range: null,
+                  section_index: 3,
+                  heading_path: ["访问审批"],
+                },
+                is_target: true,
+              },
+            ],
+            truncated: false,
+            download_available: true,
+          }),
+        });
+      },
+    );
     let storedTitle = "访问需要什么审批？";
     let storedStatus = "active";
     await page.route("**/api/v1/conversations**", async (route) => {
@@ -194,6 +260,12 @@ test.describe("Chat + Evidence Desk mocked SSE", () => {
       await expect(page.getByText("所有受限访问必须由知识库负责人审批。")).toBeVisible();
       await evidenceCitation.click();
       await expect(answerCitation).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByText("第 7～8 段")).toBeVisible();
+      await page.getByRole("button", { name: "查看原文" }).click();
+      const sourceDialog = page.getByRole("dialog", { name: "安全制度.md" });
+      await expect(sourceDialog).toBeVisible();
+      await expect(sourceDialog.getByText("第 7～8 段").first()).toBeVisible();
+      await sourceDialog.getByRole("button", { name: "关闭原文预览" }).first().click();
 
       const storedConversation = await page.evaluate((id) =>
         window.sessionStorage.getItem(`evidence-desk:conversation-id:${id}`), kbId);

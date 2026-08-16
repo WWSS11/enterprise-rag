@@ -192,6 +192,12 @@ def _context_prefix(document_name: str, section: ParsedSection) -> str:
     for key, label in (("page", "页码"), ("slide", "幻灯片"), ("sheet", "工作表")):
         if key in section.metadata:
             parts.append(f"{label}：{section.metadata[key]}")
+    if "paragraph_start" in section.metadata:
+        start = section.metadata["paragraph_start"]
+        end = section.metadata.get("paragraph_end", start)
+        parts.append(f"段落：{start}" if start == end else f"段落：{start}-{end}")
+    if "cell_range" in section.metadata:
+        parts.append(f"单元格：{section.metadata['cell_range']}")
     return "\n".join(parts)
 
 

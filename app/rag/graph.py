@@ -17,6 +17,7 @@ from app.services.chunking_service import estimate_tokens, truncate_to_tokens
 from app.services.milvus_service import milvus_service
 from app.services.model_provider import get_chat_model, get_embedding_model
 from app.services.rerank_service import rerank_service
+from app.services.source_location_service import source_location
 
 logger = structlog.get_logger(__name__)
 CITATION_POLICY_VERSION = "citation-integrity-v1"
@@ -186,28 +187,51 @@ async def retrieve(state: RagState) -> RagState:
     )
 
     document_ids: list[UUID] = []
+    chunk_ids: list[UUID] = []
     for hit in hits:
         try:
             document_ids.append(UUID(str(hit.get("entity", {}).get("document_id", ""))))
         except ValueError:
-            continue
+            pass
+        try:
+            chunk_ids.append(UUID(str(hit.get("entity", {}).get("chunk_id", ""))))
+        except ValueError:
+            pass
     active_versions: dict[str, str] = {}
-    if document_ids:
+    locations: dict[str, dict[str, object] | None] = {}
+    if document_ids or chunk_ids:
         async with AsyncSessionFactory() as db:
-            result = await db.execute(
-                select(Document.id, Document.index_version).where(
-                    Document.id.in_(document_ids),
-                    Document.tenant_id == state["tenant_id"],
-                    Document.knowledge_base_id == UUID(state["knowledge_base_id"]),
-                    Document.index_version.is_not(None),
-                    Document.status.in_(("ready", "reindexing")),
+            if document_ids:
+                result = await db.execute(
+                    select(Document.id, Document.index_version).where(
+                        Document.id.in_(document_ids),
+                        Document.tenant_id == state["tenant_id"],
+                        Document.knowledge_base_id == UUID(state["knowledge_base_id"]),
+                        Document.index_version.is_not(None),
+                        Document.status.in_(("ready", "reindexing")),
+                    )
                 )
-            )
-            active_versions = {
-                str(document_id): index_version
-                for document_id, index_version in result
-                if index_version is not None
-            }
+                active_versions = {
+                    str(document_id): index_version
+                    for document_id, index_version in result
+                    if index_version is not None
+                }
+            if chunk_ids:
+                chunk_result = await db.execute(
+                    select(DocumentChunk).where(
+                        DocumentChunk.id.in_(chunk_ids),
+                        DocumentChunk.tenant_id == state["tenant_id"],
+                        DocumentChunk.knowledge_base_id
+                        == UUID(state["knowledge_base_id"]),
+                    )
+                )
+                locations = {
+                    str(chunk.id): source_location(
+                        chunk.source_metadata,
+                        heading_path=chunk.heading_path,
+                    )
+                    for chunk in chunk_result.scalars()
+                }
 
     documents: list[dict[str, Any]] = []
     for hit in hits:
@@ -232,6 +256,7 @@ async def retrieve(state: RagState) -> RagState:
                 "index_version": entity.get("index_version", ""),
                 "content": entity.get("content", ""),
                 "embedding_content": entity.get("embedding_content", entity.get("content", "")),
+                "location": locations.get(str(entity.get("chunk_id", ""))),
                 "score": score,
             }
         )
@@ -411,6 +436,7 @@ async def generate(state: RagState, writer: StreamWriter) -> RagState:
             "chunk_index": item["chunk_index"],
             "score": item.get("rerank_score", item["score"]),
             "content_preview": item["content"][:180],
+            "location": item.get("location"),
         }
         for item in documents
     ]

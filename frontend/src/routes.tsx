@@ -50,6 +50,11 @@ const EvaluationRunPage = lazy(() =>
     default: module.EvaluationRunPage,
   })),
 );
+const FeishuConnectorPage = lazy(() =>
+  import("@/pages/FeishuConnectorPage").then((module) => ({
+    default: module.FeishuConnectorPage,
+  })),
+);
 
 function LazyRoute({ children }: { children: ReactNode }) {
   const { t } = useTranslation("common");
@@ -113,6 +118,10 @@ export function AppRoutes() {
           element={<LazyRoute><EvaluationRunPage /></LazyRoute>}
         />
         <Route path="jobs" element={<LazyRoute><JobsPage /></LazyRoute>} />
+        <Route
+          path="connectors/feishu"
+          element={<LazyRoute><FeishuConnectorPage /></LazyRoute>}
+        />
         <Route path="system" element={<SystemPage />} />
       </Route>
 

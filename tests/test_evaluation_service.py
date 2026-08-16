@@ -165,6 +165,36 @@ def test_cannot_provide_is_detected_as_refusal() -> None:
     assert metrics["refusal_correct"] is True
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "根据给定资料，无法确定网络运行日志至少保存几个月。",
+        (
+            "根据给定资料，无法得知预包装食品标签上必须标注的保质期计算规则；"
+            "资料中没有提供该规则。"
+        ),
+        "根据你提供的资料，未包含带薪年休假的天数规定。",
+        (
+            "资料中仅说明国家建立基本医疗保险等社会保险制度。\n\n"
+            "但参考资料未提供门诊报销比例，因此我无法根据现有资料确定具体数值。"
+        ),
+    ],
+)
+def test_real_baseline_refusal_phrasings_are_detected(answer: str) -> None:
+    metrics = calculate_case_metrics(
+        answer=answer,
+        retrieved=[{"document_id": "context"}],
+        reranked=[{"document_id": "context"}],
+        citations=[{"document_id": "context"}],
+        expected_document_ids=[],
+        required_key_points=[],
+        should_refuse=True,
+    )
+
+    assert metrics["actual_refusal"] is True
+    assert metrics["refusal_correct"] is True
+
+
 def test_case_metrics_record_rerank_fallback() -> None:
     metrics = calculate_case_metrics(
         answer="答案",

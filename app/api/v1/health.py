@@ -10,6 +10,7 @@ from app.services.milvus_service import milvus_service
 from app.services.redis_service import redis_service
 
 router = APIRouter()
+DEPENDENCY_CHECK_TIMEOUT_SECONDS = 5.0
 
 
 @router.get("/health/live", response_model=HealthResponse)
@@ -33,7 +34,11 @@ async def readiness() -> HealthResponse | JSONResponse:
         dependencies["milvus"] = "ok" if await milvus_service.ping() else "error"
 
     results = await asyncio.gather(
-        check_postgres(), check_redis(), check_milvus(), return_exceptions=True
+        *(
+            asyncio.wait_for(check(), timeout=DEPENDENCY_CHECK_TIMEOUT_SECONDS)
+            for check in (check_postgres, check_redis, check_milvus)
+        ),
+        return_exceptions=True,
     )
     for name, result in zip(("postgres", "redis", "milvus"), results, strict=True):
         if isinstance(result, Exception):

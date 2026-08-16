@@ -77,6 +77,8 @@ async def _set_job_state(
         job = await db.get(IngestionJob, job_id)
         if job is None:
             return
+        if job.status == "cancelled":
+            return
         job.status = status
         job.progress = progress
         job.error_message = error_message
@@ -269,13 +271,13 @@ async def _claim_document_ingestion(
             raise LookupError(f"ingestion job not found: {job_id}")
         if job.status == "succeeded":
             return DocumentJobClaim(should_run=False, result=dict(job.result))
-        if job.status == "failed":
+        if job.status in {"failed", "cancelled"}:
             return DocumentJobClaim(
                 should_run=False,
                 result={
                     "document_id": str(document_id),
                     "status": "skipped",
-                    "reason": "job already failed",
+                    "reason": f"job already {job.status}",
                 },
             )
         if job.document_id != document_id or job.job_type not in {
@@ -357,7 +359,7 @@ async def _fail_document_ingestion(
         document = await db.scalar(
             select(Document).where(Document.id == document_id).with_for_update()
         )
-        if job is not None and job.status != "succeeded":
+        if job is not None and job.status not in {"succeeded", "cancelled"}:
             job.status = "failed"
             job.progress = 100
             job.error_message = str(error)[:4_000]
@@ -517,11 +519,11 @@ async def delete_document(document_id: UUID, job_id: UUID) -> dict[str, object]:
                 raise LookupError(f"deletion job not found: {job_id}")
             if job.status == "succeeded":
                 return dict(job.result)
-            if job.status == "failed":
+            if job.status in {"failed", "cancelled"}:
                 return {
                     "document_id": str(document_id),
                     "status": "skipped",
-                    "reason": "job already failed",
+                    "reason": f"job already {job.status}",
                 }
             if job.document_id != document_id or job.job_type != "document_deletion":
                 raise ValueError(f"job {job_id} does not own document deletion {document_id}")
@@ -553,7 +555,7 @@ async def delete_document(document_id: UUID, job_id: UUID) -> dict[str, object]:
             async with AsyncSessionFactory() as db:
                 job = await db.get(IngestionJob, job_id)
                 document = await db.get(Document, document_id)
-                if job is not None and job.status != "succeeded":
+                if job is not None and job.status not in {"succeeded", "cancelled"}:
                     job.status = "failed"
                     job.progress = 100
                     job.error_message = str(exc)[:4_000]
@@ -575,8 +577,8 @@ async def rebuild_vector_index(job_id: UUID | None = None) -> dict[str, object]:
                     raise LookupError(f"index rebuild job not found: {job_id}")
                 if job.status == "succeeded":
                     return dict(job.result)
-                if job.status == "failed":
-                    return {"status": "skipped", "reason": "job already failed"}
+                if job.status in {"failed", "cancelled"}:
+                    return {"status": "skipped", "reason": f"job already {job.status}"}
                 if job.job_type != "vector_index_rebuild":
                     raise ValueError(f"job {job_id} is not an index rebuild")
                 job.status = "running"

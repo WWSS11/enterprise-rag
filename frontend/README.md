@@ -15,20 +15,26 @@ Authenticated product shell for the enterprise RAG API.
 
 ## Quick start
 
-```powershell
+```bash
 cd frontend
-copy .env.example .env
-# set VITE_HOST_IP to a host the browser can reach for Keycloak :18080 and API :8000
-npm install
+cp .env.example .env
+# edit public/config.json with browser-reachable API and OIDC endpoints
+npm ci
 npm run dev
 ```
 
 Open http://localhost:3000
 
+## Runtime configuration
+
+The browser loads `public/config.json` before React starts. These values are public and must never
+contain API keys, passwords, or tokens. Legacy `VITE_*` values remain available as a local
+development fallback.
+
 ## Auth contract
 
 1. Keycloak Authorization Code Flow + PKCE
-2. Authority: `http://{VITE_HOST_IP}:18080/realms/enterprise-rag`
+2. Authority: `config.json` 中的 `oidcAuthority`
 3. Client: `enterprise-rag-web`
 4. Callbacks: `/auth/callback`, `/auth/silent-callback`
 5. Post-logout: `/login`
@@ -44,14 +50,19 @@ Open http://localhost:3000
 | `npm run lint` | ESLint |
 | `npm run test` | Vitest unit tests |
 | `npm run build` | Production build |
-| `npm run test:e2e` | Playwright public + Keycloak PKCE auth (needs Keycloak + API) |
-| `npm run test:e2e:install` | Install Playwright Chromium |
+| `npm run test:e2e` | Deterministic Playwright suite in Chromium, Firefox, and WebKit |
+| `npm run test:e2e:install` | Install Playwright Chromium, Firefox, and WebKit |
 
-Authenticated e2e credentials (not logged):
+The default E2E command excludes tests that require Keycloak, the API, or live model providers. To
+include the real Keycloak PKCE tests, set `E2E_EXTERNAL_SERVICES=1`. To include the live RAG test as
+well, set `E2E_LIVE_RAG=1`; this also enables the Keycloak/API tests.
 
-```powershell
-$env:E2E_USERNAME="rag-admin"
-$env:E2E_PASSWORD="admin_change_me"   # local Keycloak demo password
+Authenticated E2E credentials are never logged:
+
+```bash
+export E2E_USERNAME="rag-admin"
+export E2E_PASSWORD="admin_change_me"   # local Keycloak demo password
+export E2E_EXTERNAL_SERVICES="1"
 npm run test:e2e
 ```
 

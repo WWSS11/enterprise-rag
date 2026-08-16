@@ -1,0 +1,578 @@
+{
+  "schema_version": "1.0",
+  "profile": "business-baseline",
+  "name": "公开企业合规法规基线 v2",
+  "description": "基于 v1 真实运行答案补充同义表达后的不可变评测集。20 条可回答问题与 5 条拒答问题在入库前固定。",
+  "knowledge_base": {
+    "slug": "public-compliance-baseline-v2",
+    "name": "公开企业合规法规基线 v2",
+    "description": "T13 公共、非敏感业务合规 v2 评测语料。",
+    "access_mode": "restricted"
+  },
+  "safety": {
+    "data_classification": "public",
+    "approved_for_external_models": true,
+    "provider_training_use_reviewed": true,
+    "provider_retention_reviewed": true,
+    "provider_review_outcome": "public-data-exception",
+    "provider_review_notes": "用户于 2026-08-03 明确授权搜索或生成公开评测资料并执行真实链路。SiliconFlow 公开条款声明交互数据不保存、不披露；当前 Chat 中转地址未找到可核验公开条款，因此本例外仅允许无个人信息、无商业秘密的公开法律文本。 v2 仅扩展标准答案同义组，不增加数据来源或敏感性。",
+    "approval_reference": "user-instruction-2026-08-04-public-compliance-v2"
+  },
+  "documents": [
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/01-data-security-law.md",
+      "upload_name": "01-data-security-law.md",
+      "sha256": "f50a5eb34caf212e8cad792c6596d86a8658b592f9309c0a3fe8248cd03b4b05"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/02-personal-information-protection-law.md",
+      "upload_name": "02-personal-information-protection-law.md",
+      "sha256": "280c14d2ea9f22dcfacc90128c7d6f3f998b2932c8068023fc2650816fb92d85"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/03-labor-contract-law.md",
+      "upload_name": "03-labor-contract-law.md",
+      "sha256": "fefa3f303c574f7e6159573ede404a2cebc404968d6dd9a3f74245eb02dcf108"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/04-social-insurance-law.md",
+      "upload_name": "04-social-insurance-law.md",
+      "sha256": "5deead69e6ea5b71649877b7101f06291b5bf010d99dff7241cd8e65aa0b657a"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/05-work-safety-law.md",
+      "upload_name": "05-work-safety-law.md",
+      "sha256": "78df61bbdfd2cc2a1528eb248d2004b9180b0eeb2c583ebfedfdce4016b17bfe"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/06-employment-promotion-law.md",
+      "upload_name": "06-employment-promotion-law.md",
+      "sha256": "1ed8de18b49d53a8b95b215461c9a0072364d7ea41e4a5d404aaa65775f3b058"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/07-company-law.md",
+      "upload_name": "07-company-law.md",
+      "sha256": "09e5e64d3d65825a4ffba78f9c12ace065d152f13861f1cb79f2e8b869ef0ca3"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/08-consumer-rights-law.md",
+      "upload_name": "08-consumer-rights-law.md",
+      "sha256": "88109436a7765f3cdb1037ec48b2f50cce9d087a055dc658934b9306176eb609"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/09-civil-code-contracts.md",
+      "upload_name": "09-civil-code-contracts.md",
+      "sha256": "317d1591b0cd47bc0d75d52925a88acbeb484269649b1c7a0d7c0ec621a786ec"
+    },
+    {
+      "source_path": "docs/evaluation-datasets/public-compliance-v1/documents/10-trade-union-law.md",
+      "upload_name": "10-trade-union-law.md",
+      "sha256": "6b0f2e55d750f638c3978de71652fceadba79e6bed515a1fe17667cd10ff0b50"
+    }
+  ],
+  "cases": [
+    {
+      "question": "《数据安全法》所称数据处理包括哪些活动？",
+      "reference_answer": "数据处理包括数据的收集、存储、使用、加工、传输、提供和公开等。",
+      "expected_document_names": [
+        "01-data-security-law.md"
+      ],
+      "required_key_points": [
+        "收集",
+        "存储",
+        "使用",
+        "加工",
+        "传输",
+        "提供",
+        "公开"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "data-security",
+        "definition"
+      ]
+    },
+    {
+      "question": "重要数据处理者的定期风险评估报告至少应包含哪三类内容？",
+      "reference_answer": "应包括重要数据的种类和数量、数据处理活动情况、面临的数据安全风险及应对措施。",
+      "expected_document_names": [
+        "01-data-security-law.md"
+      ],
+      "required_key_points": [
+        "种类",
+        "数量",
+        "数据处理活动",
+        "数据安全风险",
+        "应对措施"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "data-security",
+        "risk-assessment"
+      ]
+    },
+    {
+      "question": "收集个人信息时应遵守什么范围原则？",
+      "reference_answer": "应限于实现处理目的的最小范围，不得过度收集，并采取对个人权益影响最小的方式。",
+      "expected_document_names": [
+        "02-personal-information-protection-law.md"
+      ],
+      "required_key_points": [
+        "最小范围",
+        "不得过度收集",
+        "影响最小"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "privacy",
+        "minimization"
+      ]
+    },
+    {
+      "question": "个人信息保存期限的一般要求是什么？",
+      "reference_answer": "除法律、行政法规另有规定外，应为实现处理目的所必要的最短时间。",
+      "expected_document_names": [
+        "02-personal-information-protection-law.md"
+      ],
+      "required_key_points": [
+        "实现处理目的",
+        "最短时间"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "privacy",
+        "retention"
+      ]
+    },
+    {
+      "question": "已经建立劳动关系但未同时签订书面合同的，最迟何时补签？",
+      "reference_answer": "应当自用工之日起一个月内订立书面劳动合同。",
+      "expected_document_names": [
+        "03-labor-contract-law.md"
+      ],
+      "required_key_points": [
+        "用工之日起",
+        "一个月内",
+        "书面劳动合同"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "labor",
+        "contract"
+      ]
+    },
+    {
+      "question": "不同劳动合同期限对应的试用期上限分别是多少？",
+      "reference_answer": "三个月以上不满一年的合同不超过一个月；一年以上不满三年的不超过二个月；三年以上固定期限和无固定期限合同不超过六个月。",
+      "expected_document_names": [
+        "03-labor-contract-law.md"
+      ],
+      "required_key_points": [
+        "一个月",
+        "二个月",
+        "六个月"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "labor",
+        "probation"
+      ],
+      "required_key_point_groups": [
+        [
+          "一个月",
+          "1个月"
+        ],
+        [
+          "二个月",
+          "两个月",
+          "2个月"
+        ],
+        [
+          "六个月",
+          "6个月"
+        ]
+      ]
+    },
+    {
+      "question": "《社会保险法》列出的五项基本社会保险制度是什么？",
+      "reference_answer": "基本养老保险、基本医疗保险、工伤保险、失业保险和生育保险。",
+      "expected_document_names": [
+        "04-social-insurance-law.md"
+      ],
+      "required_key_points": [
+        "养老保险",
+        "医疗保险",
+        "工伤保险",
+        "失业保险",
+        "生育保险"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "social-insurance",
+        "types"
+      ]
+    },
+    {
+      "question": "用人单位应在用工后多久为职工申请社会保险登记？",
+      "reference_answer": "应当自用工之日起三十日内申请办理社会保险登记。",
+      "expected_document_names": [
+        "04-social-insurance-law.md"
+      ],
+      "required_key_points": [
+        "用工之日起",
+        "三十日内",
+        "社会保险登记"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "social-insurance",
+        "registration"
+      ],
+      "required_key_point_groups": [
+        [
+          "三十日内",
+          "30日内",
+          "三十天内",
+          "30天内"
+        ]
+      ]
+    },
+    {
+      "question": "安全生产双重预防机制由哪两个部分构成？",
+      "reference_answer": "由安全风险分级管控和生产安全事故隐患排查治理构成。",
+      "expected_document_names": [
+        "05-work-safety-law.md"
+      ],
+      "required_key_points": [
+        "安全风险分级管控",
+        "隐患排查治理"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "work-safety",
+        "prevention"
+      ]
+    },
+    {
+      "question": "特种作业人员上岗前必须满足什么条件？",
+      "reference_answer": "必须按国家规定接受专门的安全作业培训并取得相应资格，方可上岗。",
+      "expected_document_names": [
+        "05-work-safety-law.md"
+      ],
+      "required_key_points": [
+        "专门的安全作业培训",
+        "取得相应资格",
+        "方可上岗"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "work-safety",
+        "qualification"
+      ],
+      "required_key_point_groups": [
+        [
+          "方可上岗",
+          "才可以上岗",
+          "才可上岗",
+          "可以上岗作业"
+        ]
+      ]
+    },
+    {
+      "question": "《就业促进法》明确不得基于哪些差异实施就业歧视？",
+      "reference_answer": "不得因民族、种族、性别、宗教信仰等不同而歧视劳动者。",
+      "expected_document_names": [
+        "06-employment-promotion-law.md"
+      ],
+      "required_key_points": [
+        "民族",
+        "种族",
+        "性别",
+        "宗教信仰"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "employment",
+        "anti-discrimination"
+      ]
+    },
+    {
+      "question": "职业中介机构不得实施哪些与证件和费用有关的行为？",
+      "reference_answer": "不得扣押劳动者的居民身份证和其他证件，也不得向劳动者收取押金。",
+      "expected_document_names": [
+        "06-employment-promotion-law.md"
+      ],
+      "required_key_points": [
+        "不得扣押",
+        "居民身份证",
+        "不得收取押金"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "employment",
+        "agency"
+      ],
+      "required_key_point_groups": [
+        [
+          "不得收取押金",
+          "不得向劳动者收取押金",
+          "不得向劳动者收取任何押金"
+        ]
+      ]
+    },
+    {
+      "question": "新设有限责任公司的股东认缴出资一般应在何时缴足？",
+      "reference_answer": "应按照公司章程规定，自公司成立之日起五年内缴足；法律、行政法规或国务院决定另有规定的除外。",
+      "expected_document_names": [
+        "07-company-law.md"
+      ],
+      "required_key_points": [
+        "公司成立之日起",
+        "五年内",
+        "公司章程"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "company",
+        "capital"
+      ],
+      "required_key_point_groups": [
+        [
+          "五年内",
+          "5年内"
+        ]
+      ]
+    },
+    {
+      "question": "公司法允许股东用哪些非货币财产作价出资，且有什么估值要求？",
+      "reference_answer": "可用实物、知识产权、土地使用权、股权、债权等可货币估价且可依法转让的财产出资；应评估作价、核实财产，不得高估或低估。",
+      "expected_document_names": [
+        "07-company-law.md"
+      ],
+      "required_key_points": [
+        "知识产权",
+        "土地使用权",
+        "股权",
+        "债权",
+        "评估作价",
+        "不得高估或者低估"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "company",
+        "contribution"
+      ],
+      "required_key_point_groups": [
+        [
+          "不得高估或者低估",
+          "不得高估或低估",
+          "不能高估或者低估",
+          "不能高估或低估"
+        ]
+      ]
+    },
+    {
+      "question": "网络购物无理由退货的一般期限及主要商品例外是什么？",
+      "reference_answer": "消费者一般可自收到商品之日起七日内无理由退货；定作、鲜活易腐、在线下载或已拆封的音像制品和软件、已交付报刊等除外。",
+      "expected_document_names": [
+        "08-consumer-rights-law.md"
+      ],
+      "required_key_points": [
+        "七日内",
+        "定作",
+        "鲜活易腐",
+        "在线下载",
+        "报纸期刊"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "consumer",
+        "return"
+      ],
+      "required_key_point_groups": [
+        [
+          "七日内",
+          "7日内",
+          "七天内",
+          "7天内"
+        ]
+      ]
+    },
+    {
+      "question": "经营者欺诈时增加赔偿的计算规则是什么？",
+      "reference_answer": "增加赔偿为购买价款或服务费用的三倍；不足五百元时按五百元计算，法律另有规定的除外。",
+      "expected_document_names": [
+        "08-consumer-rights-law.md"
+      ],
+      "required_key_points": [
+        "三倍",
+        "不足五百元",
+        "五百元"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "consumer",
+        "fraud"
+      ],
+      "required_key_point_groups": [
+        [
+          "三倍",
+          "3倍"
+        ],
+        [
+          "不足五百元",
+          "不足500元"
+        ],
+        [
+          "五百元",
+          "500元"
+        ]
+      ]
+    },
+    {
+      "question": "提供格式条款的一方对重大利害关系条款负有什么提示说明义务？",
+      "reference_answer": "应采取合理方式提示对方注意免除或减轻其责任等重大利害关系条款，并按对方要求予以说明。",
+      "expected_document_names": [
+        "09-civil-code-contracts.md"
+      ],
+      "required_key_points": [
+        "合理的方式提示",
+        "重大利害关系",
+        "予以说明"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "civil-code",
+        "standard-terms"
+      ],
+      "required_key_point_groups": [
+        [
+          "合理的方式提示",
+          "合理方式提示",
+          "以合理方式提示",
+          "采取合理方式提示"
+        ]
+      ]
+    },
+    {
+      "question": "合同约定的定金最多可占主合同标的额多少？超出部分效力如何？",
+      "reference_answer": "定金不得超过主合同标的额的百分之二十，超过部分不产生定金效力。",
+      "expected_document_names": [
+        "09-civil-code-contracts.md"
+      ],
+      "required_key_points": [
+        "百分之二十",
+        "超过部分",
+        "不产生定金的效力"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "civil-code",
+        "deposit"
+      ],
+      "required_key_point_groups": [
+        [
+          "百分之二十",
+          "20%",
+          "20％",
+          "百分之20"
+        ],
+        [
+          "超过部分",
+          "超过主合同标的额20%的部分",
+          "超过主合同标的额百分之二十的部分"
+        ]
+      ]
+    },
+    {
+      "question": "哪些劳动者依法享有参加和组织工会的权利，组织或个人能否阻挠？",
+      "reference_answer": "在境内用人单位中以工资收入为主要生活来源的劳动者，不分民族、种族、性别、职业、宗教信仰、教育程度，均有权参加和组织工会；任何组织和个人不得阻挠和限制。",
+      "expected_document_names": [
+        "10-trade-union-law.md"
+      ],
+      "required_key_points": [
+        "工资收入为主要生活来源",
+        "参加和组织工会",
+        "不得阻挠和限制"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "trade-union",
+        "membership"
+      ]
+    },
+    {
+      "question": "工会的基本职责是什么，并通过什么制度协调劳动关系？",
+      "reference_answer": "基本职责是维护职工合法权益、竭诚服务职工群众；通过平等协商和集体合同制度推动健全劳动关系协调机制。",
+      "expected_document_names": [
+        "10-trade-union-law.md"
+      ],
+      "required_key_points": [
+        "维护职工合法权益",
+        "竭诚服务职工群众",
+        "平等协商",
+        "集体合同制度"
+      ],
+      "should_refuse": false,
+      "tags": [
+        "trade-union",
+        "duties"
+      ]
+    },
+    {
+      "question": "本知识库规定的企业所得税税率和小型微利企业优惠税率分别是多少？",
+      "reference_answer": "知识库没有收录企业所得税税率资料，无法依据现有文档回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": [
+        "refusal",
+        "tax"
+      ]
+    },
+    {
+      "question": "职工累计工作满十年时每年应享受多少天带薪年休假？",
+      "reference_answer": "知识库没有收录职工带薪年休假条例，无法依据现有文档回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": [
+        "refusal",
+        "annual-leave"
+      ]
+    },
+    {
+      "question": "预包装食品标签上必须标注的保质期计算规则是什么？",
+      "reference_answer": "知识库没有收录食品安全或预包装食品标签规则，无法依据现有文档回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": [
+        "refusal",
+        "food"
+      ]
+    },
+    {
+      "question": "网络运营者依法应当把网络运行日志至少保存几个月？",
+      "reference_answer": "知识库没有收录网络运行日志保存期限条款，无法依据现有文档回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": [
+        "refusal",
+        "cybersecurity"
+      ]
+    },
+    {
+      "question": "基本医疗保险门诊费用的具体报销比例和年度封顶线是多少？",
+      "reference_answer": "知识库只列出社会保险基本制度，没有地区性报销比例和封顶线，无法回答。",
+      "expected_document_names": [],
+      "required_key_points": [],
+      "should_refuse": true,
+      "tags": [
+        "refusal",
+        "medical-insurance"
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.document import SourceLocationRead
+
 
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=8_000)
@@ -16,6 +18,7 @@ class Citation(BaseModel):
     chunk_id: str
     score: float
     content_preview: str
+    location: SourceLocationRead | None = None
 
 
 class ChatResponse(BaseModel):

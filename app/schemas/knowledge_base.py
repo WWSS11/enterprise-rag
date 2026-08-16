@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -49,10 +50,21 @@ class KnowledgeBaseMemberUpsert(BaseModel):
     principal_id: str = Field(
         min_length=1,
         max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/-]*$",
         validation_alias=AliasChoices("principal_id", "user_id"),
     )
     permission: Literal["reader", "editor", "owner"] = "reader"
+
+    @model_validator(mode="after")
+    def validate_principal_id(self) -> "KnowledgeBaseMemberUpsert":
+        if self.principal_type == "user":
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]*", self.principal_id) is None:
+                raise ValueError("user principal_id must be a valid OIDC subject")
+        elif (
+            self.principal_id != self.principal_id.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in self.principal_id)
+        ):
+            raise ValueError("group principal_id must be a valid groups claim value")
+        return self
 
 
 class KnowledgeBaseMemberRead(BaseModel):
@@ -71,3 +83,10 @@ class KnowledgeBasePermissionRead(BaseModel):
     knowledge_base_id: UUID
     permission: Literal["reader", "editor", "owner"]
     source: Literal["admin", "tenant", "creator", "membership"]
+
+
+class DirectoryPrincipalRead(BaseModel):
+    principal_type: Literal["user", "group"]
+    principal_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=255)
+    secondary_text: str | None = Field(default=None, max_length=512)

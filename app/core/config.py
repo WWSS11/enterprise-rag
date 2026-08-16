@@ -1,9 +1,158 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RAG_CONFIG_FILE = PROJECT_ROOT / "config" / "rag.yaml"
+OIDC_ASYMMETRIC_ALGORITHMS = frozenset(
+    {
+        "RS256",
+        "RS384",
+        "RS512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "EdDSA",
+    }
+)
+
+
+def _validate_http_url(value: str, *, setting: str, origin_only: bool = False) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{setting} must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{setting} must not contain user information")
+    if parsed.fragment:
+        raise ValueError(f"{setting} must not contain a fragment")
+    if origin_only and (parsed.path not in {"", "/"} or parsed.query):
+        raise ValueError(f"{setting} must contain origins only, without paths or queries")
+    return value.rstrip("/")
+
+
+class StrictConfigModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatModelConfig(StrictConfigModel):
+    name: str
+    temperature: float
+
+
+class EmbeddingModelConfig(StrictConfigModel):
+    name: str
+    dimension: int
+
+
+class RerankModelConfig(StrictConfigModel):
+    name: str
+    enabled: bool
+    top_k: int
+    timeout_seconds: float
+    max_attempts: int
+    retry_base_seconds: float
+
+
+class ModelConfig(StrictConfigModel):
+    chat: ChatModelConfig
+    embedding: EmbeddingModelConfig
+    rerank: RerankModelConfig
+
+
+class ChunkingConfig(StrictConfigModel):
+    chunk_size: int
+    chunk_overlap: int
+    atomic_max_tokens: int
+    retrieval_target_tokens: int
+    retrieval_overlap_tokens: int
+    parent_max_tokens: int
+    embedding_context_max_tokens: int
+    semantic_enabled: bool
+    semantic_break_threshold: float
+    semantic_break_percentile: int
+
+
+class RetrievalConfig(StrictConfigModel):
+    top_k: int
+    score_threshold: float
+    hybrid_rrf_k: int
+
+
+class ContextConfig(StrictConfigModel):
+    max_tokens: int
+    max_parents: int
+    neighbor_window: int
+    document_diversity_enabled: bool
+    document_diversity_min_score_ratio: float
+
+
+class IngestionConfig(StrictConfigModel):
+    embedding_batch_size: int
+    allow_partial: bool
+
+
+class RagYamlConfig(StrictConfigModel):
+    models: ModelConfig
+    chunking: ChunkingConfig
+    retrieval: RetrievalConfig
+    context: ContextConfig
+    ingestion: IngestionConfig
+
+    def as_settings(self) -> dict[str, object]:
+        return {
+            "chat_model": self.models.chat.name,
+            "chat_temperature": self.models.chat.temperature,
+            "embedding_model": self.models.embedding.name,
+            "embedding_dimension": self.models.embedding.dimension,
+            "rerank_model": self.models.rerank.name,
+            "rerank_enabled": self.models.rerank.enabled,
+            "rerank_top_k": self.models.rerank.top_k,
+            "rerank_timeout_seconds": self.models.rerank.timeout_seconds,
+            "rerank_max_attempts": self.models.rerank.max_attempts,
+            "rerank_retry_base_seconds": self.models.rerank.retry_base_seconds,
+            "chunk_size": self.chunking.chunk_size,
+            "chunk_overlap": self.chunking.chunk_overlap,
+            "atomic_chunk_max_tokens": self.chunking.atomic_max_tokens,
+            "retrieval_chunk_target_tokens": self.chunking.retrieval_target_tokens,
+            "retrieval_chunk_overlap_tokens": self.chunking.retrieval_overlap_tokens,
+            "parent_chunk_max_tokens": self.chunking.parent_max_tokens,
+            "embedding_context_max_tokens": self.chunking.embedding_context_max_tokens,
+            "semantic_chunking_enabled": self.chunking.semantic_enabled,
+            "semantic_break_threshold": self.chunking.semantic_break_threshold,
+            "semantic_break_percentile": self.chunking.semantic_break_percentile,
+            "retrieval_top_k": self.retrieval.top_k,
+            "score_threshold": self.retrieval.score_threshold,
+            "hybrid_rrf_k": self.retrieval.hybrid_rrf_k,
+            "context_max_tokens": self.context.max_tokens,
+            "context_max_parents": self.context.max_parents,
+            "context_neighbor_window": self.context.neighbor_window,
+            "context_document_diversity_enabled": self.context.document_diversity_enabled,
+            "context_document_diversity_min_score_ratio": (
+                self.context.document_diversity_min_score_ratio
+            ),
+            "embedding_batch_size": self.ingestion.embedding_batch_size,
+            "allow_partial_ingestion": self.ingestion.allow_partial,
+        }
+
+
+class RagYamlSettingsSource(YamlConfigSettingsSource):
+    def __call__(self) -> dict[str, object]:
+        values = super().__call__()
+        if not values:
+            return {}
+        return RagYamlConfig.model_validate(values).as_settings()
 
 
 class Settings(BaseSettings):
@@ -11,9 +160,32 @@ class Settings(BaseSettings):
         env_prefix="APP_",
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         case_sensitive=False,
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        del cls, file_secret_settings
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            RagYamlSettingsSource(
+                settings_cls,
+                yaml_file=RAG_CONFIG_FILE,
+                yaml_file_encoding="utf-8",
+                yaml_config_section="rag",
+            ),
+        )
 
     app_name: str = "RAG Study Helper Enterprise"
     env: str = "local"
@@ -88,7 +260,6 @@ class Settings(BaseSettings):
             ".docx",
             ".pptx",
             ".xlsx",
-            ".xlsm",
             ".xls",
             ".html",
             ".htm",
@@ -125,15 +296,41 @@ class Settings(BaseSettings):
     oidc_clock_skew_seconds: int = Field(default=30, ge=0, le=300)
     oidc_max_token_length: int = Field(default=16_384, ge=1_024, le=131_072)
 
+    enterprise_directory_provider: Literal["disabled", "keycloak"] = "disabled"
+    enterprise_directory_tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    enterprise_directory_client_id: str = Field(default="", max_length=255)
+    enterprise_directory_client_secret: SecretStr = Field(
+        default_factory=lambda: SecretStr("")
+    )
+    enterprise_directory_group_principal: Literal["name", "path"] = "name"
+    enterprise_directory_http_timeout_seconds: float = Field(
+        default=5.0, gt=0.0, le=30.0
+    )
+
     feishu_enabled: bool = False
-    feishu_app_id: str = ""
-    feishu_app_secret: str = ""
-    feishu_space_id: str = ""
-    feishu_tenant_id: str = "default"
-    feishu_run_as_user: str = "feishu-sync"
+    feishu_app_id: str = Field(default="", max_length=255)
+    feishu_app_secret: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    feishu_space_id: str = Field(default="", max_length=255)
+    feishu_tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    feishu_run_as_user: str = Field(
+        default="feishu-sync",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._@-]*$",
+    )
     feishu_knowledge_base_id: str = ""
     feishu_base_url: str = "https://open.feishu.cn/open-apis"
-    feishu_sync_page_size: int = 50
+    feishu_sync_page_size: int = Field(default=50, ge=1, le=50)
 
     @model_validator(mode="after")
     def validate_runtime_invariants(self) -> Self:
@@ -149,21 +346,81 @@ class Settings(BaseSettings):
                 "APP_RETRIEVAL_CHUNK_TARGET_TOKENS must not exceed APP_PARENT_CHUNK_MAX_TOKENS"
             )
         production = self.env.lower() in {"prod", "production"}
+        normalized_origins: list[str] = []
+        for origin in self.cors_origins:
+            if origin == "*":
+                raise ValueError("APP_CORS_ORIGINS must not contain wildcard origins")
+            normalized = _validate_http_url(
+                origin,
+                setting="APP_CORS_ORIGINS",
+                origin_only=True,
+            )
+            if production and not normalized.startswith("https://"):
+                raise ValueError("APP_CORS_ORIGINS must use HTTPS in production")
+            if normalized not in normalized_origins:
+                normalized_origins.append(normalized)
+        if not normalized_origins:
+            raise ValueError("APP_CORS_ORIGINS must contain at least one origin")
+        self.cors_origins = normalized_origins
         if self.auth_mode == "trusted_header" and production and not self.identity_header_secret:
             raise ValueError(
                 "APP_IDENTITY_HEADER_SECRET is required for trusted_header mode in production"
             )
-        if self.auth_mode == "oidc":
+        oidc_required = (
+            self.auth_mode == "oidc"
+            or self.enterprise_directory_provider == "keycloak"
+        )
+        if oidc_required:
             if not self.oidc_issuer:
-                raise ValueError("APP_OIDC_ISSUER is required for oidc mode")
-            if not self.oidc_audience:
+                raise ValueError(
+                    "APP_OIDC_ISSUER is required for oidc mode or Keycloak directory search"
+                )
+            if self.auth_mode == "oidc" and not self.oidc_audience:
                 raise ValueError("APP_OIDC_AUDIENCE is required for oidc mode")
-            if not self.oidc_algorithms:
+            if self.auth_mode == "oidc" and not self.oidc_algorithms:
                 raise ValueError("APP_OIDC_ALGORITHMS must not be empty")
-            if "none" in {item.lower() for item in self.oidc_algorithms}:
-                raise ValueError("APP_OIDC_ALGORITHMS must not allow alg=none")
+            unsupported = (
+                self.oidc_algorithms - OIDC_ASYMMETRIC_ALGORITHMS
+                if self.auth_mode == "oidc"
+                else set()
+            )
+            if unsupported:
+                raise ValueError(
+                    "APP_OIDC_ALGORITHMS must contain only asymmetric signing algorithms"
+                )
+            self.oidc_issuer = _validate_http_url(
+                self.oidc_issuer,
+                setting="APP_OIDC_ISSUER",
+            )
+            if self.oidc_jwks_url:
+                self.oidc_jwks_url = _validate_http_url(
+                    self.oidc_jwks_url,
+                    setting="APP_OIDC_JWKS_URL",
+                )
             if production and not self.oidc_issuer.startswith("https://"):
                 raise ValueError("APP_OIDC_ISSUER must use HTTPS in production")
+            if production and self.oidc_jwks_url and not self.oidc_jwks_url.startswith(
+                "https://"
+            ):
+                raise ValueError("APP_OIDC_JWKS_URL must use HTTPS in production")
+        if self.enterprise_directory_provider == "keycloak":
+            if not self.enterprise_directory_client_id:
+                raise ValueError(
+                    "APP_ENTERPRISE_DIRECTORY_CLIENT_ID is required for Keycloak directory search"
+                )
+            if not self.enterprise_directory_client_secret.get_secret_value():
+                raise ValueError(
+                    "APP_ENTERPRISE_DIRECTORY_CLIENT_SECRET is required for "
+                    "Keycloak directory search"
+                )
+        self.feishu_base_url = _validate_http_url(
+            self.feishu_base_url,
+            setting="APP_FEISHU_BASE_URL",
+        )
+        if production and self.feishu_enabled and not self.feishu_base_url.startswith(
+            "https://"
+        ):
+            raise ValueError("APP_FEISHU_BASE_URL must use HTTPS in production")
         return self
 
 

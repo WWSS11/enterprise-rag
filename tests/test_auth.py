@@ -196,7 +196,7 @@ async def test_trusted_header_mode_remains_explicit_and_rejects_bearer_tokens(
     assert accepted.json()["is_admin"] is True
 
 
-def test_oidc_mode_requires_audience_and_rejects_none_algorithm() -> None:
+def test_oidc_mode_requires_audience_and_asymmetric_algorithms() -> None:
     with pytest.raises(ValidationError, match="APP_OIDC_AUDIENCE"):
         Settings(
             _env_file=None,
@@ -204,8 +204,30 @@ def test_oidc_mode_requires_audience_and_rejects_none_algorithm() -> None:
             oidc_issuer=ISSUER,
             oidc_audience="",
         )
-    with pytest.raises(ValidationError, match="alg=none"):
+    with pytest.raises(ValidationError, match="asymmetric"):
         _settings(oidc_algorithms={"none"})
+
+    with pytest.raises(ValidationError, match="asymmetric"):
+        _settings(oidc_algorithms={"HS256"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "jwk_override",
+    [
+        {"use": "enc"},
+        {"key_ops": ["encrypt"]},
+        {"alg": "RS512"},
+    ],
+)
+async def test_oidc_verifier_rejects_non_signing_or_algorithm_mismatched_jwk(
+    signing_material: tuple[Any, dict[str, Any]],
+    jwk_override: dict[str, Any],
+) -> None:
+    private_key, jwk = signing_material
+    jwk.update(jwk_override)
+    with pytest.raises(InvalidBearerToken, match="signing key"):
+        await StaticJWKVerifier(_settings(), jwk).verify(_token(private_key))
 
 
 def test_member_payload_supports_user_compatibility_and_group_principals() -> None:
@@ -223,3 +245,21 @@ def test_member_payload_supports_user_compatibility_and_group_principals() -> No
     assert legacy_user.principal_id == "legacy-user"
     assert group.principal_type == "group"
     assert group.principal_id == "engineering"
+
+    spaced_group = KnowledgeBaseMemberUpsert.model_validate(
+        {
+            "principal_type": "group",
+            "principal_id": "Research & Development",
+            "permission": "reader",
+        }
+    )
+    assert spaced_group.principal_id == "Research & Development"
+
+    with pytest.raises(ValidationError):
+        KnowledgeBaseMemberUpsert.model_validate(
+            {
+                "principal_type": "group",
+                "principal_id": " engineering ",
+                "permission": "reader",
+            }
+        )

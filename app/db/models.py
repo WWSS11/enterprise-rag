@@ -98,6 +98,10 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     extra_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
+    @property
+    def source_available(self) -> bool:
+        return bool(self.source_uri)
+
     chunks: Mapped[list[DocumentChunk]] = relationship(
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True
     )
@@ -259,6 +263,23 @@ class IngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
                 "job_type = 'vector_index_rebuild' AND status IN ('queued', 'running')"
             ),
         ),
+        Index(
+            "uq_ingestion_jobs_active_feishu_sync",
+            "tenant_id",
+            "job_type",
+            unique=True,
+            postgresql_where=text(
+                "job_type = 'feishu_sync' AND status IN ('queued', 'running')"
+            ),
+        ),
+        Index(
+            "uq_ingestion_jobs_active_retry",
+            "retry_of_job_id",
+            unique=True,
+            postgresql_where=text(
+                "retry_of_job_id IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+        ),
     )
 
     tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False)
@@ -268,12 +289,17 @@ class IngestionJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("documents.id", ondelete="SET NULL")
     )
+    retry_of_job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("ingestion_jobs.id", ondelete="SET NULL"), index=True
+    )
     task_id: Mapped[str | None] = mapped_column(String(255), unique=True)
     job_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[str | None] = mapped_column(String(128))
 
 
 class AuditLog(UUIDPrimaryKeyMixin, Base):
@@ -347,6 +373,14 @@ class EvaluationRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_evaluation_runs_tenant_status", "tenant_id", "status"),
         Index("ix_evaluation_runs_dataset_created", "dataset_id", "created_at"),
+        Index(
+            "uq_evaluation_runs_active_retry",
+            "retry_of_run_id",
+            unique=True,
+            postgresql_where=text(
+                "retry_of_run_id IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+        ),
     )
 
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -355,6 +389,9 @@ class EvaluationRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     dataset_id: Mapped[UUID] = mapped_column(
         ForeignKey("evaluation_datasets.id", ondelete="CASCADE"), nullable=False
+    )
+    retry_of_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evaluation_runs.id", ondelete="SET NULL"), index=True
     )
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     task_id: Mapped[str | None] = mapped_column(String(255), unique=True)
@@ -368,6 +405,8 @@ class EvaluationRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by: Mapped[str | None] = mapped_column(String(128))
 
     dataset: Mapped[EvaluationDataset] = relationship(back_populates="runs")
     results: Mapped[list[EvaluationResult]] = relationship(

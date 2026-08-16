@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import uuid4
@@ -19,6 +20,7 @@ from app.services.redis_service import redis_service
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 @asynccontextmanager
@@ -45,8 +47,22 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Accept",
+        "Authorization",
+        "Content-Type",
+        "X-Identity-Secret",
+        "X-Request-ID",
+        "X-Tenant-ID",
+        "X-User-ID",
+    ],
+    expose_headers=[
+        "X-Request-ID",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Tenant-Remaining",
+        "Retry-After",
+    ],
 )
 app.middleware("http")(observe_request)
 install_exception_handlers(app)
@@ -54,12 +70,36 @@ install_exception_handlers(app)
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
-    request_id = request.headers.get("x-request-id", str(uuid4()))
+    supplied_request_id = request.headers.get("x-request-id", "")
+    request_id = (
+        supplied_request_id
+        if REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
+        else str(uuid4())
+    )
     request.state.request_id = request_id
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=request_id, path=request.url.path)
     response = await call_next(request)
     response.headers["x-request-id"] = request_id
+    if request.url.path in {"/docs", "/redoc"}:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'none'; connect-src 'self'; img-src data: https://fastapi.tiangolo.com; "
+            "script-src https://cdn.jsdelivr.net; "
+            "style-src https://cdn.jsdelivr.net 'unsafe-inline'"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+        )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+    )
+    if request.url.path.startswith(settings.api_v1_prefix):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 

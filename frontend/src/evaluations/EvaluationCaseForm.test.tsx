@@ -40,7 +40,7 @@ function documentRecord(
     name,
     source_type: "upload",
     source_key: `uploads/${name}`,
-    source_uri: `s3://evidence-desk/${name}`,
+    source_available: true,
     source_updated_at: timestamp,
     content_type: "application/pdf",
     size_bytes: 48_512,

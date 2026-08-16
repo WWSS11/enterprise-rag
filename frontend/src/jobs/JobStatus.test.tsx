@@ -1,6 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthContext, type AuthContextValue } from "@/auth/authContext";
@@ -10,7 +11,7 @@ import { JobStatus } from "./JobStatus";
 
 const jobId = "33333333-3333-4333-8333-333333333333";
 
-function job(status: string) {
+function job(status: string, overrides: Record<string, unknown> = {}) {
   return {
     id: jobId,
     document_id: "22222222-2222-4222-8222-222222222222",
@@ -22,10 +23,11 @@ function job(status: string) {
     error_message: status === "failed" ? "parser failed" : null,
     created_at: "2026-07-15T00:00:00Z",
     updated_at: "2026-07-15T00:00:01Z",
+    ...overrides,
   };
 }
 
-function renderJob(fetchImpl: typeof fetch) {
+function renderJob(fetchImpl: typeof fetch, canControl = false) {
   const api = createApiClient({
     baseUrl: "http://api.test",
     getAccessToken: async () => "token",
@@ -60,7 +62,7 @@ function renderJob(fetchImpl: typeof fetch) {
     <QueryClientProvider client={client}>
       <AuthContext.Provider value={auth}>
         <MemoryRouter>
-          <JobStatus jobId={jobId} />
+          <JobStatus jobId={jobId} canControl={canControl} />
         </MemoryRouter>
       </AuthContext.Provider>
     </QueryClientProvider>,
@@ -117,7 +119,74 @@ describe("JobStatus polling", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it("treats failed jobs as terminal and shows the real failure without a retry action", async () => {
+  it("retries a failed job through the real control endpoint", async () => {
+    const user = userEvent.setup();
+    const retryId = "44444444-4444-4444-8444-444444444444";
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(job("failed")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(job("queued", { id: retryId, retry_of_job_id: jobId })), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ) as unknown as typeof fetch;
+    renderJob(fetchImpl, true);
+
+    expect(await screen.findByText("失败")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("parser failed");
+    await user.click(screen.getByRole("button", { name: "重试任务" }));
+
+    expect(await screen.findByText(`已创建重试任务 ${retryId}。`)).toBeVisible();
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      `http://api.test/api/v1/jobs/${jobId}/retry`,
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("cancels a queued job and renders the persisted cancelled state", async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(job("queued")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            job("cancelled", {
+              cancelled_at: "2026-07-15T00:00:02Z",
+              cancelled_by: "operator-a",
+            }),
+          ),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ) as unknown as typeof fetch;
+    renderJob(fetchImpl, true);
+
+    expect(await screen.findByText("排队中")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "取消排队任务" }));
+
+    expect(await screen.findByText("已取消")).toBeVisible();
+    expect(screen.getByText("操作者：operator-a")).toBeVisible();
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      `http://api.test/api/v1/jobs/${jobId}/cancel`,
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("treats failed jobs as terminal without polling", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(job("failed")), {
         status: 200,
@@ -128,9 +197,6 @@ describe("JobStatus polling", () => {
 
     expect(await screen.findByText("失败")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("parser failed");
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "后端没有任务重试接口。失败任务仅展示原因，不提供虚构的重试操作。",
-    );
     expect(screen.queryByRole("button", { name: /重试/ })).not.toBeInTheDocument();
     vi.useFakeTimers();
     await act(async () => {

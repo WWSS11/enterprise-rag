@@ -65,6 +65,8 @@ Milvus 只索引 retrieval chunk，并通过 Dense Vector 与内置 BM25 各召�
 
 生成状态区分 `context_sources` 与 `citations`：前者记录实际送入模型的上下文来源，后者只包含答案文本中明确出现的 `[来源:文件名#chunk-N]`。这避免把“模型看过的资料”误报成“答案实际引用的资料”，也使引用精度评测具有明确语义。
 
+引用位置从解析阶段写入 section/chunk 的 `source_metadata`，检索时只投影页码、幻灯片、段落范围、工作表单元格范围和章节路径等白名单字段。前端使用 `document_id + chunk_id` 请求受权限保护的结构化预览，后端只读取文档当前已发布版本并返回命中 section 及相邻内容；原文件下载独立执行租户和知识库 reader 权限校验。文档响应只暴露 `source_available`，不暴露服务器 `source_uri`。
+
 引用策略版本为 `citation-integrity-v1`。两轮真实实验表明，直接要求“最少引用”或显式强调证据优先级会降低关键点覆盖，因此默认生成提示保持已经验证的控制版本不变，只增强引用解析和可观测性。解析器不会在同一文件存在多个候选 chunk 时猜测省略 chunk 编号的标记；无效、歧义、不精确和同一连续引用簇内的重复标记分别计入 `citation_diagnostics`，通过聊天 metadata、审计日志和评测结果暴露。同一来源在不同要点中再次就近标注单独计为 `repeated_markers`，不视为违规。评测同时汇总引用标记有效率与更严格的策略合规率，配置快照保存策略版本，使不同策略的运行可比较。
 
 外部 rerank 只对 timeout、传输错误、429 和 5xx 进行一次短重试，仍失败则保留 RRF 顺序继续生成。在线 API 通过 Prometheus 暴露 rerank 请求结果、尝试次数和耗时；Celery 评测进程将 `rerank_status`、尝试次数、fallback 原因写入 EvaluationResult，由报告统计跨进程 retry/fallback 比例。
@@ -86,7 +88,7 @@ summary chunk 和独立神经 sparse 模型暂不进入当前主索引：它们�
 
 Celery prefork 子进程不会为每个任务反复创建事件循环。`app/workers/async_runtime.py` 为每个子进程维护一个持久 loop，使 SQLAlchemy AsyncEngine、redis-py 和异步 HTTP 客户端不会跨 loop 复用 Future。
 
-本地 Windows 开发时，PostgreSQL、Redis、Milvus、etcd、MinIO 和 Keycloak 运行在 Docker，FastAPI、Worker、Beat 从项目 `.venv` 运行。Worker 使用 Celery `solo` pool，规避 Windows 对 prefork 支持不完整的问题；容器或 Linux 部署仍使用 `prefork --concurrency=2`。两种模式读取同一套 `APP_*` 配置，但本地 `.env` 使用宿主机端口，`infra/.env` 用于 Compose 中间件密码和镜像编排。Keycloak realm import 只服务本地开发，正式环境通过相同的 OIDC issuer/audience/JWKS 契约接入企业 IdP。
+本地 Linux 开发时，PostgreSQL、Redis、Milvus、etcd、MinIO 和 Keycloak 运行在 Docker，FastAPI、Celery Worker、可选的 Beat 与 Vite 从宿主机运行。Python 进程使用项目 `.venv`，Worker 使用 `prefork --concurrency=2`。本地 `.env` 使用宿主机映射端口，`infra/.env` 用于 Compose 中间件密码和镜像编排。Keycloak realm import 只服务本地开发，正式环境通过相同的 OIDC issuer/audience/JWKS 契约接入企业 IdP。
 
 ## 自动评测闭环
 
@@ -99,6 +101,8 @@ Celery prefork 子进程不会为每个任务反复创建事件循环。`app/wor
 拒答检测只检查答案第一结论句，并移除其中的引号内容和 inline code，避免“讨论无法回答这一标记”的元问题被误判成模型拒答。运行可按已经存在的 `run_id + case_id` 结果续跑，避免 Worker 中断后重复消耗全部模型额度。PostgreSQL 保存评测事实，报告 API 只聚合已持久化结果，因此后续增加可选 LLM-as-Judge 或不同检索策略时不需要重做数据模型。
 
 评测用例将检索主文档 `expected_document_ids` 与允许引用文档 `acceptable_citation_document_ids` 分开。前者衡量检索是否找到权威依据，后者衡量答案引用是否落在直接支持材料内，避免为了提升 Citation Precision 而人为放宽 Recall ground truth。
+
+评测集生命周期使用 `active/archived` 状态而不删除历史事实。修改、归档、用例变更、批量导入和创建运行通过数据集行锁串行化；存在排队中或运行中的评测时拒绝归档。归档后用例、运行和报告保持 reader 级可读，但数据集写入、新运行与重试被活动状态门禁阻止。复制只复制数据集和用例，不复制运行、结果或门禁记录，使新版本可以独立演进而不改变旧报告。
 
 ## 运行对比与质量门禁
 

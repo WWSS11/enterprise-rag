@@ -28,9 +28,20 @@ REFUSAL_MARKERS = (
     "不知道",
     "无法回答",
     "无法提供",
+    "无法确定",
+    "无法得知",
     "没有给出",
     "未提供",
     "没有包含",
+    "未包含",
+)
+CONTEXT_ONLY_OPENINGS = (
+    "资料中只说明",
+    "资料中仅说明",
+    "现有资料只说明",
+    "现有资料仅说明",
+    "给定资料只说明",
+    "给定资料仅说明",
 )
 SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？!?])")
 QUOTED_OR_CODE = re.compile(r"`[^`]*`|“[^”]*”|\"[^\"]*\"|'[^']*'")
@@ -80,9 +91,21 @@ def detect_refusal(answer: str, citations: list[dict[str, Any]]) -> bool:
     opening_without_quotes = QUOTED_OR_CODE.sub("", opening_sentence)
     normalized_opening = normalize_for_matching(opening_without_quotes)
     refusal_scope = (normalized_opening or normalized_answer)[:120]
-    return any(
-        normalize_for_matching(marker) in refusal_scope for marker in REFUSAL_MARKERS
-    )
+    normalized_markers = tuple(normalize_for_matching(marker) for marker in REFUSAL_MARKERS)
+    if any(marker in refusal_scope for marker in normalized_markers):
+        return True
+
+    # Models sometimes lead with a cited statement about the corpus and put the
+    # actual refusal in the next sentence/paragraph. Inspect that continuation
+    # only for explicit context-only openings so an answer followed by a minor
+    # caveat is not misclassified as a full refusal.
+    if any(
+        normalized_opening.startswith(normalize_for_matching(prefix))
+        for prefix in CONTEXT_ONLY_OPENINGS
+    ):
+        contextual_scope = normalize_for_matching(QUOTED_OR_CODE.sub("", answer))[:300]
+        return any(marker in contextual_scope for marker in normalized_markers)
+    return False
 
 
 def build_citation_evidence(
@@ -656,11 +679,18 @@ async def recalculate_evaluation_run_metrics(run_id: UUID) -> EvaluationRun:
 
 async def execute_evaluation_run(run_id: UUID) -> dict[str, Any]:
     async with AsyncSessionFactory() as db:
-        run = await db.get(EvaluationRun, run_id)
+        run = await db.scalar(
+            select(EvaluationRun).where(EvaluationRun.id == run_id).with_for_update()
+        )
         if run is None:
             raise LookupError("evaluation run not found")
         if run.status == "succeeded":
             return run.summary
+        if run.status in {"failed", "cancelled"}:
+            return {
+                "status": "skipped",
+                "reason": f"evaluation run already {run.status}",
+            }
 
         cases = list(
             (

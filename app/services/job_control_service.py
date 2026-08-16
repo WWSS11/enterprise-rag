@@ -10,7 +10,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import IngestionJob
-from app.db.session import engine
+from app.db.session import AsyncSessionFactory, engine
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
 
@@ -61,6 +61,46 @@ async def active_rebuild_job(db: AsyncSession) -> IngestionJob | None:
         .order_by(IngestionJob.created_at.desc())
         .limit(1)
     )
+
+
+async def active_feishu_sync_job(
+    db: AsyncSession, tenant_id: str
+) -> IngestionJob | None:
+    return await db.scalar(
+        select(IngestionJob)
+        .where(
+            IngestionJob.tenant_id == tenant_id,
+            IngestionJob.job_type == "feishu_sync",
+            IngestionJob.status.in_(ACTIVE_JOB_STATUSES),
+        )
+        .order_by(IngestionJob.created_at.desc())
+        .limit(1)
+    )
+
+
+async def claim_job_execution(
+    job_id: UUID,
+    *,
+    expected_type: str,
+    progress: int,
+) -> bool:
+    """Atomically start or resume work unless a terminal control state won."""
+
+    async with AsyncSessionFactory() as db:
+        job = await db.scalar(
+            select(IngestionJob).where(IngestionJob.id == job_id).with_for_update()
+        )
+        if job is None:
+            raise LookupError(f"job not found: {job_id}")
+        if job.job_type != expected_type:
+            raise ValueError(f"job {job_id} is not {expected_type}")
+        if job.status in {"succeeded", "failed", "cancelled"}:
+            return False
+        job.status = "running"
+        job.progress = max(job.progress, progress)
+        job.error_message = None
+        await db.commit()
+        return True
 
 
 @asynccontextmanager

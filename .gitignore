@@ -23,6 +23,7 @@ coverage.xml
 data/
 infra/volumes/
 .runtime/
+/.root-owned-backup-*
 
 # Local AI/design tooling
 /.agents/

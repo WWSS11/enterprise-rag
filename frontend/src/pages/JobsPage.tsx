@@ -52,8 +52,8 @@ export function JobsPage() {
       <p className={styles.scope}>{t("serverScope")}</p>
 
       <section className={styles.filters} aria-label={t("filters") }>
-        <label>{t("filterStatus")}<select value={statusFilter} onChange={(event) => resetAndSet(setStatusFilter, event.target.value)}><option value="">{t("filterAll")}</option><option value="queued">{t("statusQueued")}</option><option value="running">{t("statusRunning")}</option><option value="succeeded">{t("statusSucceeded")}</option><option value="failed">{t("statusFailed")}</option></select></label>
-        <label>{t("filterType")}<select value={typeFilter} onChange={(event) => resetAndSet(setTypeFilter, event.target.value)}><option value="">{t("filterAll")}</option><option value="document_ingestion">{t("typeIngestion")}</option><option value="document_reindex">{t("typeReindex")}</option><option value="document_deletion">{t("typeDeletion")}</option><option value="local_document_scan">{t("typeScan")}</option><option value="vector_index_rebuild">{t("typeRebuild")}</option></select></label>
+        <label>{t("filterStatus")}<select value={statusFilter} onChange={(event) => resetAndSet(setStatusFilter, event.target.value)}><option value="">{t("filterAll")}</option><option value="queued">{t("statusQueued")}</option><option value="running">{t("statusRunning")}</option><option value="succeeded">{t("statusSucceeded")}</option><option value="failed">{t("statusFailed")}</option><option value="cancelled">{t("statusCancelled")}</option></select></label>
+        <label>{t("filterType")}<select value={typeFilter} onChange={(event) => resetAndSet(setTypeFilter, event.target.value)}><option value="">{t("filterAll")}</option><option value="document_ingestion">{t("typeIngestion")}</option><option value="document_reindex">{t("typeReindex")}</option><option value="document_deletion">{t("typeDeletion")}</option><option value="local_document_scan">{t("typeScan")}</option><option value="vector_index_rebuild">{t("typeRebuild")}</option><option value="feishu_sync">{t("typeFeishuSync")}</option></select></label>
         <label>{t("filterKnowledgeBase")}<select value={knowledgeBaseFilter} onChange={(event) => resetAndSet(setKnowledgeBaseFilter, event.target.value)}><option value="">{t("filterAll")}</option>{knowledgeBases.data?.map((knowledgeBase) => <option key={knowledgeBase.id} value={knowledgeBase.id}>{knowledgeBase.name}</option>)}</select></label>
       </section>
 
@@ -74,6 +74,8 @@ export function JobsPage() {
               jobId={job.id}
               initialJob={job}
               onTerminal={() => void jobs.refetch()}
+              canControl
+              onChanged={() => void jobs.refetch()}
             />
           ))}
         </section>

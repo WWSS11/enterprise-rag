@@ -11,7 +11,9 @@ import { EmptyState } from "@/components/EmptyState";
 import { OperationError } from "@/components/OperationError";
 import { StatusPill } from "@/components/StatusPill";
 import { EvaluationCaseForm } from "@/evaluations/EvaluationCaseForm";
+import { EvaluationCaseBulkImport } from "@/evaluations/EvaluationCaseBulkImport";
 import { EvaluationCaseTable } from "@/evaluations/EvaluationCaseTable";
+import { EvaluationDatasetManager } from "@/evaluations/EvaluationDatasetManager";
 import type { EvaluationCase } from "@/api/types";
 import { canEditKnowledgeBase } from "@/knowledgeBases/permissions";
 import styles from "./EvaluationConsole.module.css";
@@ -60,7 +62,12 @@ export function EvaluationDatasetPage() {
   const documents = useQuery({ queryKey: ["documents", dataset.data?.knowledge_base_id], queryFn: () => api.listDocuments(dataset.data!.knowledge_base_id), enabled: Boolean(dataset.data) });
   const runs = useQuery({ queryKey: ["evaluation-runs", datasetId, runStatusFilter, runOffset], queryFn: () => api.listEvaluationRuns({ datasetId, status: runStatusFilter || undefined, limit: RUN_PAGE_SIZE, offset: runOffset }), enabled: Boolean(dataset.data) });
   const knowledgeBase = knowledgeBases.data?.find((item) => item.id === dataset.data?.knowledge_base_id);
-  const canEdit = Boolean(knowledgeBase && canEditKnowledgeBase(identity, knowledgeBase));
+  const isArchived = dataset.data?.status === "archived";
+  const canEdit = Boolean(
+    dataset.data?.status === "active"
+      && knowledgeBase
+      && canEditKnowledgeBase(identity, knowledgeBase),
+  );
   const readyDocuments = documents.data?.filter((item) => item.status === "ready") ?? [];
   const datasetCaseTotal = caseQuery || caseTypeFilter ? caseCount.data?.total : cases.data?.total;
 
@@ -111,15 +118,18 @@ export function EvaluationDatasetPage() {
     <div className={styles.page}>
       <header className={styles.pageHeader}><div><div className={styles.kicker}>{t("evaluations:detailTitle")}</div><h1>{dataset.data.name}</h1><p>{dataset.data.description || "—"}</p></div><Link className={styles.secondaryLink} to="/app/evaluations">{t("evaluations:backToDatasets")}</Link></header>
       {(location.state as { created?: boolean } | null)?.created ? <p className={styles.successNotice} role="status">{t("evaluations:createSuccess")}</p> : null}
+      {(location.state as { copiedFrom?: string } | null)?.copiedFrom ? <p className={styles.successNotice} role="status">{t("evaluations:copySuccess")}</p> : null}
 
       <section className={styles.panel} aria-labelledby="dataset-metadata-title">
-        <div className={styles.sectionHeader}><h2 id="dataset-metadata-title">{t("evaluations:detailTitle")}</h2><StatusPill tone={dataset.data.status === "active" ? "ok" : "unknown"} label={dataset.data.status === "active" ? t("evaluations:statusActive") : t("evaluations:statusUnknown", { status: dataset.data.status })} /></div>
+        <div className={styles.sectionHeader}><h2 id="dataset-metadata-title">{t("evaluations:detailTitle")}</h2><StatusPill tone={dataset.data.status === "active" ? "ok" : "unknown"} label={dataset.data.status === "active" ? t("evaluations:statusActive") : isArchived ? t("evaluations:statusArchived") : t("evaluations:statusUnknown", { status: dataset.data.status })} /></div>
         <dl className={styles.factGrid}>
           <div><dt>{t("evaluations:datasetId")}</dt><dd><code>{dataset.data.id}</code></dd></div><div><dt>{t("evaluations:knowledgeBase")}</dt><dd>{knowledgeBase?.name || <code>{dataset.data.knowledge_base_id}</code>}</dd></div><div><dt>{t("evaluations:createdBy")}</dt><dd><code>{dataset.data.created_by}</code></dd></div><div><dt>{t("evaluations:createdAt")}</dt><dd>{formatDateTime(locale, dataset.data.created_at)}</dd></div><div><dt>{t("evaluations:updatedAt")}</dt><dd>{formatDateTime(locale, dataset.data.updated_at)}</dd></div><div><dt>{t("evaluationRuns:totalCases")}</dt><dd className={styles.monoMetric}>{datasetCaseTotal ?? "—"}</dd></div>
         </dl>
       </section>
 
-      <section className={styles.noticeSection}><h2>{t("evaluations:permissionTitle")}</h2><p>{canEdit ? t("evaluations:permissionEditor") : t("evaluations:permissionReadOnly")}</p></section>
+      <section className={styles.noticeSection}><h2>{t("evaluations:permissionTitle")}</h2><p>{isArchived ? t("evaluations:archivedReadOnly") : canEdit ? t("evaluations:permissionEditor") : t("evaluations:permissionReadOnly")}</p></section>
+
+      {canEdit ? <EvaluationDatasetManager dataset={dataset.data} /> : null}
 
       {canEdit && caseEditor ? (
         <section ref={editorRef} className={styles.panel} aria-labelledby="case-editor-title">
@@ -140,6 +150,19 @@ export function EvaluationDatasetPage() {
             />
           )}
         </section>
+      ) : null}
+
+      {canEdit ? (
+        <EvaluationCaseBulkImport
+          datasetId={datasetId}
+          onImported={async () => {
+            setCaseOffset(0);
+            setCaseQuery("");
+            setCaseQueryDraft("");
+            setCaseTypeFilter("");
+            await queryClient.invalidateQueries({ queryKey: ["evaluation-cases", datasetId] });
+          }}
+        />
       ) : null}
 
       <section className={styles.panel} aria-labelledby="case-list-title">
@@ -163,17 +186,17 @@ export function EvaluationDatasetPage() {
         {cases.data && cases.data.total > 0 ? <nav className={styles.pagination} aria-label={t("evaluationCases:pagination")}><Button type="button" variant="secondary" disabled={caseOffset === 0} onClick={() => setCaseOffset(Math.max(0, caseOffset - CASE_PAGE_SIZE))}>{t("evaluationRuns:previous")}</Button><span>{t("evaluationCases:pageSummary", { page: Math.floor(caseOffset / CASE_PAGE_SIZE) + 1, pages: Math.max(1, Math.ceil(cases.data.total / CASE_PAGE_SIZE)), total: cases.data.total })}</span><Button type="button" variant="secondary" disabled={caseOffset + CASE_PAGE_SIZE >= cases.data.total} onClick={() => setCaseOffset(caseOffset + CASE_PAGE_SIZE)}>{t("evaluationRuns:next")}</Button></nav> : null}
       </section>
 
-      <section className={styles.panel} aria-labelledby="start-run-title"><div className={styles.sectionHeader}><div><h2 id="start-run-title">{t("evaluationRuns:startTitle")}</h2><p>{t("evaluationRuns:startDetail")}</p></div>{canEdit ? <Button type="button" disabled={startRun.isPending || datasetCaseTotal === 0} onClick={() => startRun.mutate()}>{startRun.isPending ? t("evaluationRuns:starting") : t("evaluationRuns:start")}</Button> : null}</div>{!canEdit ? <p className={styles.notice}>{t("evaluationRuns:permissionStartRequiresEditor")}</p> : null}{datasetCaseTotal === 0 ? <p className={styles.validation}>{t("evaluationRuns:datasetHasNoCases")}</p> : null}{startRun.isError ? <OperationError error={startRun.error} onRetry={() => startRun.mutate()} /> : null}</section>
+      <section className={styles.panel} aria-labelledby="start-run-title"><div className={styles.sectionHeader}><div><h2 id="start-run-title">{t("evaluationRuns:startTitle")}</h2><p>{t("evaluationRuns:startDetail")}</p></div>{canEdit ? <Button type="button" disabled={startRun.isPending || datasetCaseTotal === 0} onClick={() => startRun.mutate()}>{startRun.isPending ? t("evaluationRuns:starting") : t("evaluationRuns:start")}</Button> : null}</div>{!canEdit ? <p className={styles.notice}>{isArchived ? t("evaluations:archivedReadOnly") : t("evaluationRuns:permissionStartRequiresEditor")}</p> : null}{datasetCaseTotal === 0 ? <p className={styles.validation}>{t("evaluationRuns:datasetHasNoCases")}</p> : null}{startRun.isError ? <OperationError error={startRun.error} onRetry={() => startRun.mutate()} /> : null}</section>
 
       <section className={styles.panel} aria-labelledby="known-runs-title">
         <div className={styles.sectionHeader}><div><h2 id="known-runs-title">{t("evaluationRuns:runsTitle")}</h2><p>{t("evaluationRuns:serverScope")}</p></div><Button type="button" variant="secondary" onClick={() => void runs.refetch()}>{t("evaluationRuns:refresh")}</Button></div>
-        <div className={styles.inlineForm}><div className={styles.formField}><label htmlFor="run-status-filter">{t("evaluationRuns:filterStatus")}</label><select id="run-status-filter" value={runStatusFilter} onChange={(event) => { setRunStatusFilter(event.target.value); setRunOffset(0); }}><option value="">{t("evaluationRuns:filterAll")}</option><option value="queued">{t("evaluationRuns:statusQueued")}</option><option value="running">{t("evaluationRuns:statusRunning")}</option><option value="succeeded">{t("evaluationRuns:statusSucceeded")}</option><option value="failed">{t("evaluationRuns:statusFailed")}</option></select></div></div>
+        <div className={styles.inlineForm}><div className={styles.formField}><label htmlFor="run-status-filter">{t("evaluationRuns:filterStatus")}</label><select id="run-status-filter" value={runStatusFilter} onChange={(event) => { setRunStatusFilter(event.target.value); setRunOffset(0); }}><option value="">{t("evaluationRuns:filterAll")}</option><option value="queued">{t("evaluationRuns:statusQueued")}</option><option value="running">{t("evaluationRuns:statusRunning")}</option><option value="succeeded">{t("evaluationRuns:statusSucceeded")}</option><option value="failed">{t("evaluationRuns:statusFailed")}</option><option value="cancelled">{t("evaluationRuns:statusCancelled")}</option></select></div></div>
         <form className={styles.inlineForm} onSubmit={submitRunId}><div className={styles.formField}><label htmlFor="existing-run-id">{t("evaluationRuns:pasteRunLabel")}</label><input id="existing-run-id" value={pastedRunId} onChange={(event) => setPastedRunId(event.target.value)} placeholder={t("evaluationRuns:pasteRunPlaceholder")} /></div><Button type="submit" variant="secondary" disabled={openRun.isPending}>{t("evaluationRuns:openRun")}</Button></form>
         {runValidation ? <p className={styles.validation}>{runValidation}</p> : null}
         {openRun.isError ? <OperationError error={openRun.error} onRetry={() => openRun.mutate(pastedRunId.trim())} /> : null}
         {runs.isError ? <OperationError error={runs.error} onRetry={() => void runs.refetch()} /> : null}
         {runs.isLoading ? <p className={styles.loading}>{t("evaluationRuns:loading")}</p> : null}
-        {runs.data?.items.length === 0 ? <p className={styles.muted}>{t("evaluationRuns:emptyDetail")}</p> : <ul className={styles.runIdList}>{runs.data?.items.map((run) => <li key={run.id}><Link to={`/app/evaluations/runs/${run.id}`}><code>{run.id}</code><span>{run.status === "queued" ? t("evaluationRuns:statusQueued") : run.status === "running" ? t("evaluationRuns:statusRunning") : run.status === "succeeded" ? t("evaluationRuns:statusSucceeded") : run.status === "failed" ? t("evaluationRuns:statusFailed") : run.status}</span></Link></li>)}</ul>}
+        {runs.data?.items.length === 0 ? <p className={styles.muted}>{t("evaluationRuns:emptyDetail")}</p> : <ul className={styles.runIdList}>{runs.data?.items.map((run) => <li key={run.id}><Link to={`/app/evaluations/runs/${run.id}`}><code>{run.id}</code><span>{run.status === "queued" ? t("evaluationRuns:statusQueued") : run.status === "running" ? t("evaluationRuns:statusRunning") : run.status === "succeeded" ? t("evaluationRuns:statusSucceeded") : run.status === "failed" ? t("evaluationRuns:statusFailed") : run.status === "cancelled" ? t("evaluationRuns:statusCancelled") : run.status}</span></Link></li>)}</ul>}
         {runs.data && runs.data.total > 0 ? <nav className={styles.pagination} aria-label={t("evaluationRuns:pagination")}><Button type="button" variant="secondary" disabled={runOffset === 0} onClick={() => setRunOffset(Math.max(0, runOffset - RUN_PAGE_SIZE))}>{t("evaluationRuns:previous")}</Button><span>{t("evaluationRuns:pageSummary", { page: Math.floor(runOffset / RUN_PAGE_SIZE) + 1, pages: Math.max(1, Math.ceil(runs.data.total / RUN_PAGE_SIZE)), total: runs.data.total })}</span><Button type="button" variant="secondary" disabled={runOffset + RUN_PAGE_SIZE >= runs.data.total} onClick={() => setRunOffset(runOffset + RUN_PAGE_SIZE)}>{t("evaluationRuns:next")}</Button></nav> : null}
       </section>
     </div>

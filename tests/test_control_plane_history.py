@@ -27,6 +27,11 @@ def test_control_plane_history_routes_are_published() -> None:
         "/api/v1/knowledge-bases/{knowledge_base_id}/members",
         "/api/v1/knowledge-bases/{knowledge_base_id}/permissions/me",
         "/api/v1/audit-logs",
+        "/api/v1/jobs/{job_id}/cancel",
+        "/api/v1/jobs/{job_id}/retry",
+        "/api/v1/evaluations/runs/{run_id}/cancel",
+        "/api/v1/evaluations/runs/{run_id}/retry",
+        "/api/v1/knowledge-bases/{knowledge_base_id}/directory-principals",
     }
     assert expected <= paths.keys()
     assert "get" in paths["/api/v1/jobs"]
@@ -40,6 +45,24 @@ def test_control_plane_history_routes_are_published() -> None:
     assert "delete" in paths[
         "/api/v1/knowledge-bases/{knowledge_base_id}/members/{member_id}"
     ]
+    directory_parameters = {
+        parameter["name"]
+        for parameter in paths[
+            "/api/v1/knowledge-bases/{knowledge_base_id}/directory-principals"
+        ]["get"]["parameters"]
+    }
+    assert {"type", "q", "limit", "offset"} <= directory_parameters
+
+    for path in [
+        "/api/v1/knowledge-bases",
+        "/api/v1/documents",
+        "/api/v1/evaluations/datasets",
+        "/api/v1/knowledge-bases/{knowledge_base_id}/members",
+    ]:
+        parameters = {
+            parameter["name"] for parameter in paths[path]["get"]["parameters"]
+        }
+        assert {"q", "limit", "offset"} <= parameters
 
 
 def test_ingestion_jobs_have_stable_knowledge_base_scope() -> None:
@@ -52,6 +75,42 @@ def test_ingestion_jobs_have_stable_knowledge_base_scope() -> None:
 def test_page_contract_enforces_bounded_limits() -> None:
     with pytest.raises(ValidationError):
         JobPage(items=[], total=0, limit=101, offset=0)
+
+
+def test_e06_collection_limits_remain_bounded_in_openapi() -> None:
+    paths = app.openapi()["paths"]
+    expected_limits = {
+        "/api/v1/knowledge-bases": (100, 100),
+        "/api/v1/documents": (100, 100),
+        "/api/v1/knowledge-bases/{knowledge_base_id}/members": (100, 100),
+        "/api/v1/evaluations/datasets": (100, 100),
+        "/api/v1/jobs": (50, 100),
+        "/api/v1/conversations": (50, 100),
+        "/api/v1/conversations/{conversation_id}/messages": (100, 200),
+        "/api/v1/audit-logs": (50, 100),
+        "/api/v1/evaluations/datasets/{dataset_id}/cases": (20, 100),
+        "/api/v1/evaluations/runs": (50, 100),
+    }
+    for path, (default, maximum) in expected_limits.items():
+        parameters = {
+            parameter["name"]: parameter["schema"]
+            for parameter in paths[path]["get"]["parameters"]
+        }
+        assert parameters["limit"]["default"] == default
+        assert parameters["limit"]["maximum"] == maximum
+        assert parameters["offset"]["minimum"] == 0
+
+    for path in [
+        "/api/v1/knowledge-bases",
+        "/api/v1/documents",
+        "/api/v1/knowledge-bases/{knowledge_base_id}/members",
+        "/api/v1/evaluations/datasets",
+        "/api/v1/evaluations/datasets/{dataset_id}/cases",
+    ]:
+        parameter_names = {
+            parameter["name"] for parameter in paths[path]["get"]["parameters"]
+        }
+        assert "q" in parameter_names
 
 
 def test_knowledge_base_update_requires_an_explicit_change() -> None:
@@ -165,3 +224,26 @@ async def test_effective_permission_has_explicit_sources(
         )
         == expected
     )
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_admin_cannot_authorize_foreign_knowledge_base() -> None:
+    foreign = KnowledgeBase(
+        id=uuid4(),
+        tenant_id="tenant-b",
+        slug="foreign",
+        name="Foreign",
+        access_mode="tenant",
+        status="active",
+        created_by="owner-b",
+    )
+    db = AsyncMock(spec=AsyncSession)
+    db.get.return_value = foreign
+
+    with pytest.raises(LookupError, match="not found"):
+        await knowledge_base_service.authorize_identity(
+            db,
+            RequestIdentity(tenant_id="tenant-a", user_id="admin-a", is_admin=True),
+            foreign.id,
+            required_permission="owner",
+        )

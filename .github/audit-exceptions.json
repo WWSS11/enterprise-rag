@@ -1,0 +1,9 @@
+{
+  "npm": [
+    {
+      "id": "GHSA-qwww-vcr4-c8h2",
+      "expires": "2026-09-03",
+      "reason": "The affected React Router RSC/Server Action mode is not used by this Vite SPA."
+    }
+  ]
+}

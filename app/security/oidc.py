@@ -2,6 +2,7 @@ import asyncio
 import time
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import jwt
@@ -74,8 +75,19 @@ class OIDCTokenVerifier:
         if not isinstance(keys, list):
             raise OIDCProviderUnavailable("OIDC JWKS payload is missing keys")
         for item in keys:
-            if isinstance(item, dict) and item.get("kid") == key_id:
-                return item
+            if not isinstance(item, dict) or item.get("kid") != key_id:
+                continue
+            if item.get("use") not in {None, "sig"}:
+                continue
+            key_ops = item.get("key_ops")
+            if key_ops is not None and (
+                not isinstance(key_ops, list) or "verify" not in key_ops
+            ):
+                continue
+            algorithm = item.get("alg")
+            if algorithm is not None and algorithm not in self.settings.oidc_algorithms:
+                continue
+            return item
         return None
 
     async def _get_jwks(self, *, force_refresh: bool = False) -> dict[str, Any]:
@@ -113,6 +125,17 @@ class OIDCTokenVerifier:
         return jwks_url
 
     async def _fetch_json(self, url: str) -> dict[str, Any]:
+        parsed = urlsplit(url)
+        production = self.settings.env.lower() in {"prod", "production"}
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+            or (production and parsed.scheme != "https")
+        ):
+            raise OIDCProviderUnavailable("OIDC metadata URL is not allowed")
         try:
             async with httpx.AsyncClient(
                 timeout=self.settings.oidc_http_timeout_seconds,

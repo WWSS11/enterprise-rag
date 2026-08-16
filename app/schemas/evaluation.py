@@ -6,7 +6,23 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class EvaluationDatasetCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     knowledge_base_id: UUID
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4_000)
+
+
+class EvaluationDatasetUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4_000)
+
+
+class EvaluationDatasetCopy(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4_000)
 
@@ -214,6 +230,7 @@ class EvaluationRunRead(BaseModel):
     tenant_id: str
     knowledge_base_id: UUID
     dataset_id: UUID
+    retry_of_run_id: UUID | None
     created_by: str
     task_id: str | None
     status: str
@@ -226,6 +243,8 @@ class EvaluationRunRead(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     error_message: str | None
+    cancelled_at: datetime | None
+    cancelled_by: str | None
     created_at: datetime
     updated_at: datetime
 

@@ -39,6 +39,13 @@ function statusPresentation(
       tone: "error",
     };
   }
+  if (status === "cancelled") {
+    return {
+      label: t("evaluationRuns:statusCancelled"),
+      detail: t("evaluationRuns:cancelledDetail"),
+      tone: "unknown",
+    };
+  }
   return {
     label: t("evaluationRuns:statusUnknown", { status }),
     detail: t("evaluationRuns:noRetry"),
@@ -53,6 +60,12 @@ type EvaluationRunPanelProps = {
   recalculating: boolean;
   recalculateError?: unknown;
   onRecalculate: () => void;
+  canControl?: boolean;
+  cancelling?: boolean;
+  retrying?: boolean;
+  controlError?: unknown;
+  onCancel?: () => void;
+  onRetry?: () => void;
 };
 
 export function EvaluationRunPanel({
@@ -62,6 +75,12 @@ export function EvaluationRunPanel({
   recalculating,
   recalculateError,
   onRecalculate,
+  canControl = false,
+  cancelling = false,
+  retrying = false,
+  controlError,
+  onCancel,
+  onRetry,
 }: EvaluationRunPanelProps) {
   const { t, i18n } = useTranslation(["evaluationRuns", "qualityGates", "common"]);
   const locale = i18n.language as AppLocale;
@@ -106,6 +125,12 @@ export function EvaluationRunPanel({
             <dt>{t("evaluationRuns:datasetId")}</dt>
             <dd><code>{run.dataset_id}</code></dd>
           </div>
+          {run.retry_of_run_id ? (
+            <div>
+              <dt>{t("evaluationRuns:retryOfRunId")}</dt>
+              <dd><code>{run.retry_of_run_id}</code></dd>
+            </div>
+          ) : null}
           <div>
             <dt>{t("evaluationRuns:knowledgeBaseId")}</dt>
             <dd><code>{run.knowledge_base_id}</code></dd>
@@ -156,9 +181,31 @@ export function EvaluationRunPanel({
           <div className={styles.failure} role="alert">
             <strong>{t("evaluationRuns:errorMessage")}</strong>
             <p>{run.error_message}</p>
-            <p>{t("evaluationRuns:noRetry")}</p>
           </div>
         ) : null}
+        {run.status === "cancelled" && run.cancelled_by ? (
+          <p className={styles.notice}>
+            {t("evaluationRuns:cancelledBy", { user: run.cancelled_by })}
+          </p>
+        ) : null}
+        {canControl && run.status === "running" ? (
+          <p className={styles.notice}>{t("evaluationRuns:runningCannotCancel")}</p>
+        ) : null}
+        {canControl && run.status === "queued" && onCancel ? (
+          <div className={styles.formActions}>
+            <Button type="button" variant="danger" disabled={cancelling} onClick={onCancel}>
+              {cancelling ? t("evaluationRuns:cancelling") : t("evaluationRuns:cancelRun")}
+            </Button>
+          </div>
+        ) : null}
+        {canControl && ["failed", "cancelled"].includes(run.status) && onRetry ? (
+          <div className={styles.formActions}>
+            <Button type="button" variant="secondary" disabled={retrying} onClick={onRetry}>
+              {retrying ? t("evaluationRuns:retryingRun") : t("evaluationRuns:retryRun")}
+            </Button>
+          </div>
+        ) : null}
+        {controlError ? <OperationError error={controlError} /> : null}
       </section>
 
       <details className={styles.detailsPanel}>

@@ -296,6 +296,56 @@ describe("Evaluation Console API client", () => {
     expect(JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body))).toEqual(payload);
   });
 
+  it("updates, archives, and copies datasets through lifecycle endpoints", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ ...evaluationDataset(), name: "Release gate v2" }))
+      .mockResolvedValueOnce(jsonResponse({ ...evaluationDataset(), status: "archived" }))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...evaluationDataset(), id: resultId, name: "Release gate copy" }, { status: 201 }),
+      );
+    const api = createClient(fetchImpl);
+
+    await api.updateEvaluationDataset(datasetId, {
+      name: "Release gate v2",
+      description: null,
+    });
+    await api.archiveEvaluationDataset(datasetId);
+    await api.copyEvaluationDataset(datasetId, {
+      name: "Release gate copy",
+      description: "Editable cases",
+    });
+
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      `http://api.test/api/v1/evaluations/datasets/${datasetId}`,
+      `http://api.test/api/v1/evaluations/datasets/${datasetId}/archive`,
+      `http://api.test/api/v1/evaluations/datasets/${datasetId}/copy`,
+    ]);
+    expect(fetchImpl.mock.calls.map((call) => (call[1] as RequestInit).method)).toEqual([
+      "PATCH", "POST", "POST",
+    ]);
+    expect(JSON.parse(String((fetchImpl.mock.calls[2][1] as RequestInit).body))).toEqual({
+      name: "Release gate copy",
+      description: "Editable cases",
+    });
+  });
+
+  it("requests archived datasets explicitly while preserving the active default", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([evaluationDataset()]))
+      .mockResolvedValueOnce(jsonResponse([{ ...evaluationDataset(), status: "archived" }]));
+    const api = createClient(fetchImpl);
+
+    await api.listEvaluationDatasets({ status: "active" });
+    await api.listEvaluationDatasets({ status: "archived" });
+
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      "http://api.test/api/v1/evaluations/datasets",
+      "http://api.test/api/v1/evaluations/datasets?status=archived",
+    ]);
+  });
+
   it("returns a typed passing gate result and omits default thresholds", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(qualityGateReport(true), {

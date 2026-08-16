@@ -31,7 +31,7 @@ function documentRecord() {
     name: "policy.pdf",
     source_type: "upload",
     source_key: null,
-    source_uri: "uploads/policy.pdf",
+    source_available: true,
     source_updated_at: null,
     content_type: "application/pdf",
     size_bytes: 1024,
@@ -368,6 +368,40 @@ describe("Knowledge Base Ops API client", () => {
       description: null,
       access_mode: "tenant",
     });
+  });
+
+  it("searches enterprise directory principals with bounded query parameters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            principal_type: "user",
+            principal_id: "11111111-1111-4111-8111-111111111111",
+            display_name: "Mei Lin",
+            secondary_text: "mei.lin · mei@example.com",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const api = createApiClient({
+      baseUrl: "http://api.test",
+      getAccessToken: async () => "token",
+      renewAccessToken: async () => null,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const results = await api.searchKnowledgeBaseDirectory(kbId, {
+      principalType: "user",
+      query: "mei lin",
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(results[0].display_name).toBe("Mei Lin");
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      `http://api.test/api/v1/knowledge-bases/${kbId}/directory-principals?type=user&q=mei+lin&limit=20&offset=0`,
+    );
   });
 
   it("uses server conversation history, rename, archive, and restore contracts", async () => {

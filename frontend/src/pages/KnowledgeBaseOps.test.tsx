@@ -252,6 +252,19 @@ describe("Knowledge Base Ops pages", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
+      if (url.includes(`/knowledge-bases/${kbId}/directory-principals`)) {
+        return new Response(
+          JSON.stringify([
+            {
+              principal_type: "group",
+              principal_id: "engineering",
+              display_name: "Engineering",
+              secondary_text: "/engineering",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
       if (url.endsWith(`/knowledge-bases/${kbId}/members`)) {
         return new Response("[]", {
           status: 200,
@@ -278,7 +291,8 @@ describe("Knowledge Base Ops pages", () => {
 
     expect(await screen.findByRole("heading", { name: "授权用户或群组" })).toBeVisible();
     await user.selectOptions(screen.getByLabelText("主体类型"), "group");
-    await user.type(screen.getByLabelText("主体标识"), "engineering");
+    await user.type(screen.getByLabelText("搜索企业群组"), "engineering");
+    await user.click(await screen.findByRole("button", { name: /Engineering.*选择/ }));
     await user.selectOptions(screen.getByLabelText("权限"), "editor");
     await user.click(screen.getByRole("button", { name: "保存授权" }));
 

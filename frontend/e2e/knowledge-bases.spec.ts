@@ -48,7 +48,7 @@ function document(status = "queued") {
     name: "policy.pdf",
     source_type: "upload",
     source_key: null,
-    source_uri: "data/uploads/policy.pdf",
+    source_available: true,
     source_updated_at: null,
     content_type: "application/pdf",
     size_bytes: 1024,
@@ -185,6 +185,25 @@ test.describe("Knowledge Base Ops mocked API", () => {
           }),
         }),
       );
+      await page.route(
+        `**/api/v1/knowledge-bases/${createdKbId}/directory-principals**`,
+        async (route) => {
+          expect(route.request().url()).toContain("type=group");
+          expect(route.request().url()).toContain("q=engineering");
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify([
+              {
+                principal_type: "group",
+                principal_id: "engineering",
+                display_name: "Engineering",
+                secondary_text: "/engineering",
+              },
+            ]),
+          });
+        },
+      );
       await page.route(`**/api/v1/knowledge-bases/${createdKbId}/members`, async (route) => {
         if (route.request().method() === "GET") {
           await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
@@ -293,7 +312,8 @@ test.describe("Knowledge Base Ops mocked API", () => {
       await expect(page.getByRole("heading", { name: "上传文档" })).toBeVisible();
 
       await page.getByLabel("主体类型").selectOption("group");
-      await page.getByLabel("主体标识").fill("engineering");
+      await page.getByLabel("搜索企业群组").fill("engineering");
+      await page.getByRole("button", { name: /Engineering.*选择/ }).click();
       await page.getByLabel("权限").selectOption("editor");
       await page.getByRole("button", { name: "保存授权" }).click();
       await expect(page.getByText("已将 engineering 的权限设置为 editor。")).toBeVisible();

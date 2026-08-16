@@ -76,6 +76,9 @@ class KnowledgeBaseService:
         identity: RequestIdentity,
         *,
         include_archived: bool = False,
+        query: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[KnowledgeBase]:
         return await self.list_accessible(
             db,
@@ -84,6 +87,9 @@ class KnowledgeBaseService:
             groups=identity.groups,
             is_admin=identity.is_admin,
             include_archived=include_archived,
+            query=query,
+            limit=limit,
+            offset=offset,
         )
 
     async def get_or_create_default(
@@ -183,17 +189,38 @@ class KnowledgeBaseService:
         groups: frozenset[str] | None = None,
         is_admin: bool | None = None,
         include_archived: bool = False,
+        query: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[KnowledgeBase]:
         await self.get_or_create_default(db, tenant_id, user_id)
         statuses = ["active", "archived"] if include_archived else ["active"]
+        search_condition = None
+        if query:
+            pattern = f"%{query}%"
+            search_condition = or_(
+                KnowledgeBase.name.ilike(pattern),
+                KnowledgeBase.slug.ilike(pattern),
+            )
+
+        def paged(statement):
+            if search_condition is not None:
+                statement = statement.where(search_condition)
+            statement = statement.order_by(
+                KnowledgeBase.is_default.desc(), KnowledgeBase.name.asc()
+            )
+            if limit is not None:
+                statement = statement.limit(limit).offset(offset)
+            return statement
+
         if is_admin is True or (is_admin is None and user_id in get_settings().admin_user_ids):
             result = await db.execute(
-                select(KnowledgeBase)
-                .where(
+                paged(
+                    select(KnowledgeBase).where(
                     KnowledgeBase.tenant_id == tenant_id,
                     KnowledgeBase.status.in_(statuses),
+                    )
                 )
-                .order_by(KnowledgeBase.is_default.desc(), KnowledgeBase.name.asc())
             )
             return list(result.scalars())
 
@@ -232,12 +259,12 @@ class KnowledgeBaseService:
                 ),
             )
         result = await db.execute(
-            select(KnowledgeBase)
-            .where(
-                KnowledgeBase.tenant_id == tenant_id,
-                visibility,
+            paged(
+                select(KnowledgeBase).where(
+                    KnowledgeBase.tenant_id == tenant_id,
+                    visibility,
+                )
             )
-            .order_by(KnowledgeBase.is_default.desc(), KnowledgeBase.name.asc())
         )
         return list(result.scalars())
 

@@ -11,19 +11,24 @@ import {
   knowledgeBaseUpdateSchema,
   knowledgeBaseMemberSchema,
   knowledgeBaseMemberListSchema,
+  directoryPrincipalListSchema,
   knowledgeBasePermissionSchema,
   knowledgeBaseMemberUpsertSchema,
   documentListSchema,
+  documentPreviewSchema,
   documentUploadAcceptedSchema,
   localScanRequestSchema,
   jobSchema,
   jobPageSchema,
+  feishuConnectorStatusSchema,
+  feishuDiagnosticSchema,
   conversationSchema,
   conversationPageSchema,
   chatMessagePageSchema,
   auditLogPageSchema,
   chatRequestSchema,
   evaluationDatasetCreateSchema,
+  evaluationDatasetUpdateSchema,
   evaluationDatasetListSchema,
   evaluationDatasetSchema,
   evaluationCaseBulkCreateSchema,
@@ -46,19 +51,25 @@ import {
   type KnowledgeBaseUpdate,
   type KnowledgeBaseMember,
   type KnowledgeBaseMemberUpsert,
+  type DirectoryPrincipal,
   type KnowledgeBasePermission,
   type DocumentRecord,
+  type DocumentPreview,
   type DocumentUploadAccepted,
   type LocalScanRequest,
   type Job,
   type JobPage,
+  type FeishuConnectorStatus,
+  type FeishuDiagnostic,
   type Conversation,
   type ConversationPage,
   type ChatMessagePage,
   type AuditLogPage,
   type ChatRequest,
   type EvaluationDataset,
+  type EvaluationDatasetCopy,
   type EvaluationDatasetCreate,
+  type EvaluationDatasetUpdate,
   type EvaluationCase,
   type EvaluationCaseBulkCreate,
   type EvaluationCaseCreate,
@@ -184,6 +195,39 @@ export function createApiClient(options: ApiClientOptions) {
   ): Promise<T> {
     const response = await requestWithMetadata(path, init, parse, allowAnonymous);
     return response.data;
+  }
+
+  async function requestBlob(path: string): Promise<Blob> {
+    let token = await options.getAccessToken();
+    if (!token) {
+      throw new ApiError(
+        401,
+        {
+          type: "about:blank",
+          title: "Unauthorized",
+          status: 401,
+          detail: "No access token available. Sign in again.",
+        },
+        null,
+      );
+    }
+    const execute = (accessToken: string) => fetchImpl(joinUrl(baseUrl, path), {
+      method: "GET",
+      headers: { Accept: "application/octet-stream", Authorization: `Bearer ${accessToken}` },
+    });
+    let response = await execute(token);
+    if (response.status === 401) {
+      const renewed = await options.renewAccessToken();
+      if (renewed) {
+        token = renewed;
+        response = await execute(token);
+      }
+    }
+    if (!response.ok) {
+      const { problem, requestId } = await parseProblemDetails(response);
+      throw new ApiError(response.status, problem, requestId, response.headers.get("Retry-After"));
+    }
+    return response.blob();
   }
 
   async function uploadDocument(
@@ -406,9 +450,17 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    listKnowledgeBases(options: { includeArchived?: boolean } = {}): Promise<KnowledgeBase[]> {
+    listKnowledgeBases(options: {
+      includeArchived?: boolean;
+      query?: string;
+      limit?: number;
+      offset?: number;
+    } = {}): Promise<KnowledgeBase[]> {
       const path = withQuery("/api/v1/knowledge-bases", {
         include_archived: options.includeArchived ? "true" : undefined,
+        q: options.query,
+        limit: options.limit,
+        offset: options.offset,
       });
       return request(path, { method: "GET" }, (data) =>
         knowledgeBaseListSchema.parse(data),
@@ -484,12 +536,40 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    listKnowledgeBaseMembers(knowledgeBaseId: string): Promise<KnowledgeBaseMember[]> {
-      return request(
+    listKnowledgeBaseMembers(
+      knowledgeBaseId: string,
+      filters: { query?: string; limit?: number; offset?: number } = {},
+    ): Promise<KnowledgeBaseMember[]> {
+      const path = withQuery(
         `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/members`,
+        { q: filters.query, limit: filters.limit, offset: filters.offset },
+      );
+      return request(
+        path,
         { method: "GET" },
         (data) => knowledgeBaseMemberListSchema.parse(data),
       );
+    },
+
+    searchKnowledgeBaseDirectory(
+      knowledgeBaseId: string,
+      filters: {
+        principalType: "user" | "group";
+        query: string;
+        limit?: number;
+        offset?: number;
+      },
+    ): Promise<DirectoryPrincipal[]> {
+      const path = withQuery(
+        `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/directory-principals`,
+        {
+          type: filters.principalType,
+          q: filters.query,
+          limit: filters.limit,
+          offset: filters.offset,
+        },
+      );
+      return request(path, { method: "GET" }, (data) => directoryPrincipalListSchema.parse(data));
     },
 
     deleteKnowledgeBaseMember(knowledgeBaseId: string, memberId: string): Promise<void> {
@@ -508,13 +588,31 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    listDocuments(knowledgeBaseId?: string): Promise<DocumentRecord[]> {
-      const query = knowledgeBaseId
-        ? `?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`
-        : "";
-      return request(`/api/v1/documents${query}`, { method: "GET" }, (data) =>
+    listDocuments(
+      knowledgeBaseId?: string,
+      filters: { query?: string; limit?: number; offset?: number } = {},
+    ): Promise<DocumentRecord[]> {
+      const path = withQuery("/api/v1/documents", {
+        knowledge_base_id: knowledgeBaseId,
+        q: filters.query,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return request(path, { method: "GET" }, (data) =>
         documentListSchema.parse(data),
       );
+    },
+
+    getDocumentPreview(documentId: string, chunkId?: string): Promise<DocumentPreview> {
+      const path = withQuery(
+        `/api/v1/documents/${encodeURIComponent(documentId)}/preview`,
+        { chunk_id: chunkId },
+      );
+      return request(path, { method: "GET" }, (data) => documentPreviewSchema.parse(data));
+    },
+
+    downloadDocument(documentId: string): Promise<Blob> {
+      return requestBlob(`/api/v1/documents/${encodeURIComponent(documentId)}/download`);
     },
 
     scanDocuments(payload: LocalScanRequest): Promise<Job> {
@@ -552,6 +650,22 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
+    cancelJob(jobId: string): Promise<Job> {
+      return request(
+        `/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`,
+        { method: "POST" },
+        (data) => jobSchema.parse(data),
+      );
+    },
+
+    retryJob(jobId: string): Promise<Job> {
+      return request(
+        `/api/v1/jobs/${encodeURIComponent(jobId)}/retry`,
+        { method: "POST" },
+        (data) => jobSchema.parse(data),
+      );
+    },
+
     listJobs(filters: {
       status?: string;
       jobType?: string;
@@ -577,8 +691,45 @@ export function createApiClient(options: ApiClientOptions) {
       );
     },
 
-    listEvaluationDatasets(): Promise<EvaluationDataset[]> {
-      return request("/api/v1/evaluations/datasets", { method: "GET" }, (data) =>
+    getFeishuConnector(): Promise<FeishuConnectorStatus> {
+      return request(
+        "/api/v1/connectors/feishu",
+        { method: "GET" },
+        (data) => feishuConnectorStatusSchema.parse(data),
+      );
+    },
+
+    diagnoseFeishuConnector(): Promise<FeishuDiagnostic> {
+      return request(
+        "/api/v1/connectors/feishu/diagnose",
+        { method: "POST" },
+        (data) => feishuDiagnosticSchema.parse(data),
+      );
+    },
+
+    startFeishuSync(): Promise<Job> {
+      return request(
+        "/api/v1/connectors/feishu/sync",
+        { method: "POST" },
+        (data) => jobSchema.parse(data),
+      );
+    },
+
+    listEvaluationDatasets(
+      filters: {
+        query?: string;
+        status?: "active" | "archived" | "all";
+        limit?: number;
+        offset?: number;
+      } = {},
+    ): Promise<EvaluationDataset[]> {
+      const path = withQuery("/api/v1/evaluations/datasets", {
+        q: filters.query,
+        status: filters.status === "active" ? undefined : filters.status,
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return request(path, { method: "GET" }, (data) =>
         evaluationDatasetListSchema.parse(data),
       );
     },
@@ -600,6 +751,46 @@ export function createApiClient(options: ApiClientOptions) {
       return request(
         `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}`,
         { method: "GET" },
+        (data) => evaluationDatasetSchema.parse(data),
+      );
+    },
+
+    updateEvaluationDataset(
+      datasetId: string,
+      payload: EvaluationDatasetUpdate,
+    ): Promise<EvaluationDataset> {
+      const body = evaluationDatasetUpdateSchema.parse(payload);
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        (data) => evaluationDatasetSchema.parse(data),
+      );
+    },
+
+    archiveEvaluationDataset(datasetId: string): Promise<EvaluationDataset> {
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/archive`,
+        { method: "POST" },
+        (data) => evaluationDatasetSchema.parse(data),
+      );
+    },
+
+    copyEvaluationDataset(
+      datasetId: string,
+      payload: EvaluationDatasetCopy,
+    ): Promise<EvaluationDataset> {
+      const body = evaluationDatasetUpdateSchema.parse(payload);
+      return request(
+        `/api/v1/evaluations/datasets/${encodeURIComponent(datasetId)}/copy`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
         (data) => evaluationDatasetSchema.parse(data),
       );
     },
@@ -704,6 +895,22 @@ export function createApiClient(options: ApiClientOptions) {
       return request(
         `/api/v1/evaluations/runs/${encodeURIComponent(runId)}`,
         { method: "GET" },
+        (data) => evaluationRunSchema.parse(data),
+      );
+    },
+
+    cancelEvaluationRun(runId: string): Promise<EvaluationRun> {
+      return request(
+        `/api/v1/evaluations/runs/${encodeURIComponent(runId)}/cancel`,
+        { method: "POST" },
+        (data) => evaluationRunSchema.parse(data),
+      );
+    },
+
+    retryEvaluationRun(runId: string): Promise<EvaluationRun> {
+      return request(
+        `/api/v1/evaluations/runs/${encodeURIComponent(runId)}/retry`,
+        { method: "POST" },
         (data) => evaluationRunSchema.parse(data),
       );
     },

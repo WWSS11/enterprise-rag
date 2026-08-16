@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AppLocale } from "@/i18n";
 import { formatDateTime } from "@/i18n/format";
@@ -11,7 +11,7 @@ import { usePageVisibility } from "@/hooks/usePageVisibility";
 import type { Job } from "@/api/types";
 import styles from "./JobStatus.module.css";
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
+const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
 function statusPresentation(
   status: string,
@@ -21,6 +21,7 @@ function statusPresentation(
   if (status === "running") return { label: t("jobs:statusRunning"), tone: "loading" };
   if (status === "succeeded") return { label: t("jobs:statusSucceeded"), tone: "ok" };
   if (status === "failed") return { label: t("jobs:statusFailed"), tone: "error" };
+  if (status === "cancelled") return { label: t("jobs:statusCancelled"), tone: "unknown" };
   return { label: t("jobs:statusUnknown", { status }), tone: "unknown" };
 }
 
@@ -33,6 +34,7 @@ function typeLabel(
   if (type === "document_deletion") return t("jobs:typeDeletion");
   if (type === "local_document_scan") return t("jobs:typeScan");
   if (type === "vector_index_rebuild") return t("jobs:typeRebuild");
+  if (type === "feishu_sync") return t("jobs:typeFeishuSync");
   return t("jobs:typeUnknown", { type });
 }
 
@@ -41,15 +43,20 @@ export function JobStatus({
   initialJob,
   onForget,
   onTerminal,
+  canControl = false,
+  onChanged,
 }: {
   jobId: string;
   initialJob?: Job;
   onForget?: () => void;
   onTerminal?: (job: Job) => void;
+  canControl?: boolean;
+  onChanged?: (job: Job) => void;
 }) {
   const { t, i18n } = useTranslation(["jobs", "common"]);
   const { api } = useAuth();
   const visible = usePageVisibility();
+  const queryClient = useQueryClient();
   const job = useQuery({
     queryKey: ["jobs", jobId],
     queryFn: () => api.getJob(jobId),
@@ -59,6 +66,19 @@ export function JobStatus({
       return visible && (!status || !TERMINAL_STATUSES.has(status)) ? 2500 : false;
     },
     refetchIntervalInBackground: false,
+  });
+  const cancel = useMutation({
+    mutationFn: () => api.cancelJob(jobId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["jobs", jobId], updated);
+      onChanged?.(updated);
+    },
+  });
+  const retry = useMutation({
+    mutationFn: () => api.retryJob(jobId),
+    onSuccess: (created) => {
+      onChanged?.(created);
+    },
   });
   const notifiedTerminalJobRef = useRef<string | null>(null);
   const locale = i18n.language as AppLocale;
@@ -136,6 +156,12 @@ export function JobStatus({
             <dd><code>{job.data.document_id}</code></dd>
           </div>
         ) : null}
+        {job.data.retry_of_job_id ? (
+          <div>
+            <dt>{t("jobs:retryOfJobId")}</dt>
+            <dd><code>{job.data.retry_of_job_id}</code></dd>
+          </div>
+        ) : null}
         <div>
           <dt>{t("jobs:updatedAt")}</dt>
           <dd>{formatDateTime(locale, job.data.updated_at)}</dd>
@@ -147,7 +173,47 @@ export function JobStatus({
         <div className={styles.failure} role="alert">
           <strong>{t("jobs:failureReason")}</strong>
           <p>{job.data.error_message || "—"}</p>
-          <p>{t("jobs:noRetry")}</p>
+        </div>
+      ) : null}
+      {job.data.status === "cancelled" ? (
+        <div className={styles.cancelled} role="status">
+          <strong>{t("jobs:cancelledDetail")}</strong>
+          {job.data.cancelled_by ? (
+            <p>{t("jobs:cancelledBy", { user: job.data.cancelled_by })}</p>
+          ) : null}
+        </div>
+      ) : null}
+      {retry.data ? (
+        <p className={styles.note} role="status">
+          {t("jobs:retryCreated", { id: retry.data.id })}
+        </p>
+      ) : null}
+      {cancel.error ? <OperationError error={cancel.error} /> : null}
+      {retry.error ? <OperationError error={retry.error} /> : null}
+      {canControl && job.data.status === "running" ? (
+        <p className={styles.note}>{t("jobs:runningCannotCancel")}</p>
+      ) : null}
+      {canControl && ["queued", "failed", "cancelled"].includes(job.data.status) ? (
+        <div className={styles.actions}>
+          {job.data.status === "queued" ? (
+            <Button
+              type="button"
+              variant="danger"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate()}
+            >
+              {cancel.isPending ? t("jobs:cancelling") : t("jobs:cancelJob")}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={retry.isPending}
+              onClick={() => retry.mutate()}
+            >
+              {retry.isPending ? t("jobs:retrying") : t("jobs:retryJob")}
+            </Button>
+          )}
         </div>
       ) : null}
       {onForget ? (

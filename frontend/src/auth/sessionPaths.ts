@@ -1,11 +1,34 @@
 export const RETURN_PATH_KEY = "evidence-desk:return-path";
 export const JUST_LOGGED_OUT_KEY = "evidence-desk:just-logged-out";
+const DEFAULT_RETURN_PATH = "/app/chat";
 
 export function safeReturnPath(path: string | null | undefined): string {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) {
-    return "/app/chat";
+  const containsControlCharacter = path
+    ? [...path].some((character) => character.charCodeAt(0) < 32)
+    : false;
+  if (
+    !path ||
+    path.length > 2048 ||
+    !path.startsWith("/") ||
+    path.includes("\\") ||
+    containsControlCharacter
+  ) {
+    return DEFAULT_RETURN_PATH;
   }
-  return path;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    return DEFAULT_RETURN_PATH;
+  }
+  if (decoded.startsWith("//") || decoded.includes("\\")) {
+    return DEFAULT_RETURN_PATH;
+  }
+  const parsed = new URL(path, window.location.origin);
+  if (parsed.origin !== window.location.origin || !/^\/app(?:\/|$)/.test(parsed.pathname)) {
+    return DEFAULT_RETURN_PATH;
+  }
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 export function consumeReturnPath(): string {

@@ -12,6 +12,7 @@ import { evaluationsZh, type EvaluationsDict } from "./evaluations";
 import { evaluationCasesZh, type EvaluationCasesDict } from "./evaluationCases";
 import { evaluationRunsZh, type EvaluationRunsDict } from "./evaluationRuns";
 import { qualityGatesZh, type QualityGatesDict } from "./qualityGates";
+import { connectorsZh, type ConnectorsDict } from "./connectors";
 
 export const zhCN = {
   common: commonZh,
@@ -28,6 +29,7 @@ export const zhCN = {
   evaluationCases: evaluationCasesZh,
   evaluationRuns: evaluationRunsZh,
   qualityGates: qualityGatesZh,
+  connectors: connectorsZh,
 } as const;
 
 export type AppResources = {
@@ -45,4 +47,5 @@ export type AppResources = {
   evaluationCases: EvaluationCasesDict;
   evaluationRuns: EvaluationRunsDict;
   qualityGates: QualityGatesDict;
+  connectors: ConnectorsDict;
 };

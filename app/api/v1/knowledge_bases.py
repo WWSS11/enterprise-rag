@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -10,6 +11,7 @@ from app.api.dependencies import request_identity
 from app.db.models import EvaluationRun, IngestionJob, KnowledgeBase, KnowledgeBaseMember
 from app.db.session import get_db
 from app.schemas.knowledge_base import (
+    DirectoryPrincipalRead,
     KnowledgeBaseCreate,
     KnowledgeBaseMemberRead,
     KnowledgeBaseMemberUpsert,
@@ -19,6 +21,13 @@ from app.schemas.knowledge_base import (
 )
 from app.security.identity import RequestIdentity
 from app.services.audit_service import record_audit
+from app.services.enterprise_directory_service import (
+    EnterpriseDirectoryError,
+    EnterpriseDirectoryNotConfigured,
+    EnterpriseDirectoryTenantMismatch,
+    KeycloakDirectoryService,
+    get_enterprise_directory_service,
+)
 from app.services.knowledge_base_service import knowledge_base_service
 
 router = APIRouter()
@@ -100,11 +109,19 @@ async def create_knowledge_base(
 @router.get("", response_model=list[KnowledgeBaseRead])
 async def list_knowledge_bases(
     include_archived: bool = Query(default=False),
+    query: str | None = Query(default=None, alias="q", max_length=200),
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[KnowledgeBase]:
     knowledge_bases = await knowledge_base_service.list_accessible_identity(
-        db, identity, include_archived=include_archived
+        db,
+        identity,
+        include_archived=include_archived,
+        query=query,
+        limit=limit,
+        offset=offset,
     )
     await db.commit()
     return knowledge_bases
@@ -231,10 +248,63 @@ async def restore_knowledge_base(
 
 
 @router.get(
+    "/{knowledge_base_id}/directory-principals",
+    response_model=list[DirectoryPrincipalRead],
+)
+async def search_directory_principals(
+    knowledge_base_id: UUID,
+    principal_type: Literal["user", "group"] = Query(alias="type"),
+    query: str = Query(alias="q", min_length=2, max_length=200),
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    identity: RequestIdentity = Depends(request_identity),
+    db: AsyncSession = Depends(get_db),
+    directory_service: KeycloakDirectoryService = Depends(
+        get_enterprise_directory_service
+    ),
+) -> list[DirectoryPrincipalRead]:
+    clean_query = query.strip()
+    if len(clean_query) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="directory query must contain at least two non-space characters",
+        )
+    try:
+        await knowledge_base_service.authorize_identity(
+            db, identity, knowledge_base_id, required_permission="owner"
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        return await directory_service.search(
+            tenant_id=identity.tenant_id,
+            principal_type=principal_type,
+            query=clean_query,
+            limit=limit,
+            offset=offset,
+        )
+    except (
+        EnterpriseDirectoryNotConfigured,
+        EnterpriseDirectoryTenantMismatch,
+    ) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except EnterpriseDirectoryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="enterprise directory is temporarily unavailable",
+        ) from exc
+
+
+@router.get(
     "/{knowledge_base_id}/members", response_model=list[KnowledgeBaseMemberRead]
 )
 async def list_members(
     knowledge_base_id: UUID,
+    query: str | None = Query(default=None, alias="q", max_length=200),
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     identity: RequestIdentity = Depends(request_identity),
     db: AsyncSession = Depends(get_db),
 ) -> list[KnowledgeBaseMember]:
@@ -246,15 +316,20 @@ async def list_members(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    statement = select(KnowledgeBaseMember).where(
+        KnowledgeBaseMember.knowledge_base_id == knowledge_base_id
+    )
+    if query:
+        statement = statement.where(KnowledgeBaseMember.principal_id.ilike(f"%{query}%"))
     return list(
         (
             await db.execute(
-                select(KnowledgeBaseMember)
-                .where(KnowledgeBaseMember.knowledge_base_id == knowledge_base_id)
-                .order_by(
+                statement.order_by(
                     KnowledgeBaseMember.principal_type,
                     KnowledgeBaseMember.principal_id,
                 )
+                .limit(limit)
+                .offset(offset)
             )
         ).scalars()
     )

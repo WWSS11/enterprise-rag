@@ -21,32 +21,32 @@ import styles from "./AppShell.module.css";
 
 type IconComp = ComponentType<SVGProps<SVGSVGElement>>;
 
-const NAV_ITEMS: { to: string; key: "chat" | "knowledgeBases" | "documents" | "evaluations" | "jobs" | "system"; icon: IconComp; ready: boolean }[] = [
-  { to: "/app/chat", key: "chat", icon: IconChat, ready: true },
-  { to: "/app/knowledge-bases", key: "knowledgeBases", icon: IconLibrary, ready: true },
-  { to: "/app/documents", key: "documents", icon: IconDocument, ready: true },
-  { to: "/app/evaluations", key: "evaluations", icon: IconEval, ready: true },
-  { to: "/app/jobs", key: "jobs", icon: IconJobs, ready: true },
-  { to: "/app/system", key: "system", icon: IconSystem, ready: true },
+const NAV_ITEMS: { to: string; key: "chat" | "knowledgeBases" | "documents" | "evaluations" | "jobs" | "connectors" | "system"; icon: IconComp; adminOnly?: boolean }[] = [
+  { to: "/app/chat", key: "chat", icon: IconChat },
+  { to: "/app/knowledge-bases", key: "knowledgeBases", icon: IconLibrary },
+  { to: "/app/documents", key: "documents", icon: IconDocument },
+  { to: "/app/evaluations", key: "evaluations", icon: IconEval },
+  { to: "/app/jobs", key: "jobs", icon: IconJobs },
+  { to: "/app/connectors/feishu", key: "connectors", icon: IconSystem, adminOnly: true },
+  { to: "/app/system", key: "system", icon: IconSystem },
 ];
 
 function NavItems({
   collapsed,
   onNavigate,
-  demoteUnready,
+  showAdmin,
 }: {
   collapsed: boolean;
   onNavigate?: () => void;
-  demoteUnready: boolean;
+  showAdmin: boolean;
 }) {
   const { t } = useTranslation("navigation");
 
   return (
     <nav className={styles.nav} aria-label={t("primaryNav")}>
-      {NAV_ITEMS.map((item) => {
+      {NAV_ITEMS.filter((item) => !item.adminOnly || showAdmin).map((item) => {
         const label = t(item.key);
         const Icon = item.icon;
-        const muted = demoteUnready && !item.ready;
         return (
           <NavLink
             key={item.to}
@@ -55,22 +55,18 @@ function NavItems({
               [
                 styles.navLink,
                 isActive ? styles.navLinkActive : "",
-                muted ? styles.navLinkMuted : "",
               ]
                 .filter(Boolean)
                 .join(" ")
             }
-            title={collapsed ? `${label}${muted ? ` (${t("comingSoon")})` : ""}` : undefined}
-            aria-label={collapsed ? `${label}${muted ? ` — ${t("comingSoon")}` : ""}` : undefined}
+            title={collapsed ? label : undefined}
+            aria-label={collapsed ? label : undefined}
             onClick={onNavigate}
           >
             <span className={styles.navIcon} aria-hidden="true">
               <Icon />
             </span>
             <span className={styles.navLabel}>{label}</span>
-            {muted && !collapsed ? (
-              <span className={styles.soonBadge}>{t("comingSoon")}</span>
-            ) : null}
           </NavLink>
         );
       })}
@@ -143,7 +139,7 @@ export function AppShell() {
           </div>
         </div>
 
-        <NavItems collapsed={collapsed} demoteUnready />
+        <NavItems collapsed={collapsed} showAdmin={showAdmin} />
 
         <div className={styles.sidebarFooter}>
           <button
@@ -241,7 +237,7 @@ export function AppShell() {
                 <IconClose />
               </button>
             </div>
-            <NavItems collapsed={false} demoteUnready onNavigate={closeMobile} />
+            <NavItems collapsed={false} showAdmin={showAdmin} onNavigate={closeMobile} />
           </div>
         </>
       ) : null}

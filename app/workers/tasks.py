@@ -5,8 +5,9 @@ from redis.exceptions import LockError
 
 from app.core.config import get_settings
 from app.services.evaluation_service import execute_evaluation_run
-from app.services.feishu_service import prepare_feishu_sync
+from app.services.feishu_service import FeishuAPIError, prepare_feishu_sync
 from app.services.ingestion_service import delete_document, ingest_document, rebuild_vector_index
+from app.services.job_control_service import claim_job_execution
 from app.services.local_scan_service import discover_local_documents
 from app.services.redis_service import redis_service
 from app.workers.async_runtime import run_async
@@ -39,7 +40,15 @@ def scan_local_documents_task(
     from app.services.ingestion_service import _set_job_state
 
     parent_id = UUID(parent_job_id)
-    run_async(_set_job_state(parent_id, status="running", progress=10))
+    should_run = run_async(
+        claim_job_execution(
+            parent_id,
+            expected_type="local_document_scan",
+            progress=10,
+        )
+    )
+    if not should_run:
+        return {"status": "skipped", "reason": "job is already terminal"}
     try:
         dispatches, stats = run_async(
             discover_local_documents(tenant_id, UUID(knowledge_base_id), root_alias)
@@ -72,10 +81,43 @@ def scan_local_documents_task(
 
 
 @celery_app.task(name="app.tasks.sync_feishu")
-def sync_feishu_task() -> dict[str, object]:
+def sync_feishu_task(parent_job_id: str | None = None) -> dict[str, object]:
+    from app.services.ingestion_service import _set_job_state
+
     settings = get_settings()
+    parent_id = UUID(parent_job_id) if parent_job_id else None
+    if parent_id is not None:
+        should_run = run_async(
+            claim_job_execution(
+                parent_id,
+                expected_type="feishu_sync",
+                progress=5,
+            )
+        )
+        if not should_run:
+            return {"status": "skipped", "reason": "job is already terminal"}
     if not settings.feishu_enabled:
-        return {"status": "skipped", "reason": "APP_FEISHU_ENABLED=false"}
+        result: dict[str, object] = {
+            "status": "skipped",
+            "reason": "APP_FEISHU_ENABLED=false",
+        }
+        if parent_id is not None:
+            run_async(
+                _set_job_state(
+                    parent_id,
+                    status="failed",
+                    progress=100,
+                    error_message="Feishu connector is disabled",
+                    result={
+                        **result,
+                        "failure": {
+                            "category": "configuration",
+                            "message": "Feishu connector is disabled",
+                        },
+                    },
+                )
+            )
+        return result
 
     async def prepare_with_lock():
         lock = redis_service.client.lock(
@@ -88,20 +130,76 @@ def sync_feishu_task() -> dict[str, object]:
 
     try:
         ingestion_dispatches, deletion_dispatches, stats = run_async(prepare_with_lock())
+        for dispatch in ingestion_dispatches:
+            ingest_document_task.apply_async(
+                args=[str(dispatch.document_id), str(dispatch.job_id), str(dispatch.path)],
+                task_id=dispatch.task_id,
+            )
+        for dispatch in deletion_dispatches:
+            delete_document_task.apply_async(
+                args=[str(dispatch.document_id), str(dispatch.job_id)],
+                task_id=dispatch.task_id,
+            )
+        result = {
+            "status": "queued",
+            **stats,
+            "ingestion_jobs": len(ingestion_dispatches),
+            "deletion_jobs": len(deletion_dispatches),
+        }
+        if parent_id is not None:
+            run_async(
+                _set_job_state(
+                    parent_id,
+                    status="succeeded",
+                    progress=100,
+                    result=result,
+                )
+            )
+        return result
     except LockError:
+        failure = {
+            "category": "conflict",
+            "message": "Another Feishu sync holds the connector lock",
+            "retryable": True,
+        }
+        if parent_id is not None:
+            run_async(
+                _set_job_state(
+                    parent_id,
+                    status="failed",
+                    progress=100,
+                    error_message="another Feishu sync is running",
+                    result={"failure": failure},
+                )
+            )
         return {"status": "skipped", "reason": "another Feishu sync is running"}
-
-    for dispatch in ingestion_dispatches:
-        ingest_document_task.apply_async(
-            args=[str(dispatch.document_id), str(dispatch.job_id), str(dispatch.path)],
-            task_id=dispatch.task_id,
+    except Exception as exc:
+        failure = (
+            exc.failure_details()
+            if isinstance(exc, FeishuAPIError)
+            else {
+                "category": "configuration"
+                if isinstance(exc, (LookupError, PermissionError, RuntimeError, ValueError))
+                else "internal",
+                "message": (
+                    "Feishu connector configuration or target permission is invalid"
+                    if isinstance(exc, (LookupError, PermissionError, RuntimeError, ValueError))
+                    else "Feishu synchronization failed"
+                ),
+                "error_type": type(exc).__name__,
+            }
         )
-    for dispatch in deletion_dispatches:
-        delete_document_task.apply_async(
-            args=[str(dispatch.document_id), str(dispatch.job_id)],
-            task_id=dispatch.task_id,
-        )
-    return {"status": "queued", **stats}
+        if parent_id is not None:
+            run_async(
+                _set_job_state(
+                    parent_id,
+                    status="failed",
+                    progress=100,
+                    error_message=str(failure["message"])[:4_000],
+                    result={"failure": failure},
+                )
+            )
+        raise
 
 
 @celery_app.task(name="app.tasks.run_evaluation")

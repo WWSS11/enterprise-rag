@@ -243,25 +243,6 @@
   margin: 0 auto;
 }
 
-.navLinkMuted {
-  opacity: 0.72;
-}
-
-.soonBadge {
-  margin-left: auto;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  color: var(--color-ink-muted);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  padding: 0.05rem 0.35rem;
-  white-space: nowrap;
-}
-
-.shellCollapsed .soonBadge {
-  display: none;
-}
-
 .drawerHeader {
   display: flex;
   align-items: center;

@@ -91,8 +91,25 @@
   overflow-wrap: anywhere;
 }
 
+.cancelled {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.cancelled p {
+  color: var(--color-ink-secondary);
+  font-size: var(--text-sm);
+}
+
 .actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   justify-content: flex-end;
 }
 

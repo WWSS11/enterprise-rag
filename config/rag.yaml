@@ -1,0 +1,45 @@
+# Versioned, non-secret RAG defaults. APP_* environment variables may override
+# any corresponding value for experiments or emergency deployment changes.
+rag:
+  models:
+    chat:
+      name: gpt-5.5
+      temperature: 0.2
+    embedding:
+      name: BAAI/bge-large-zh-v1.5
+      dimension: 1024
+    rerank:
+      name: BAAI/bge-reranker-v2-m3
+      enabled: true
+      top_k: 8
+      timeout_seconds: 30
+      max_attempts: 2
+      retry_base_seconds: 0.5
+
+  chunking:
+    chunk_size: 480
+    chunk_overlap: 80
+    atomic_max_tokens: 160
+    retrieval_target_tokens: 320
+    retrieval_overlap_tokens: 48
+    parent_max_tokens: 960
+    embedding_context_max_tokens: 400
+    semantic_enabled: true
+    semantic_break_threshold: 0.58
+    semantic_break_percentile: 15
+
+  retrieval:
+    top_k: 40
+    score_threshold: 0.0
+    hybrid_rrf_k: 60
+
+  context:
+    max_tokens: 4000
+    max_parents: 5
+    neighbor_window: 1
+    document_diversity_enabled: true
+    document_diversity_min_score_ratio: 0.1
+
+  ingestion:
+    embedding_batch_size: 16
+    allow_partial: false
